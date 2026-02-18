@@ -167,9 +167,26 @@ async def process_game(game, stats_client, feature_builder, ensemble,
         features=features,
     )
 
-    model_prob = meta_result["meta_probability"]
-    edge = meta_result["meta_edge"]
+    raw_model_prob = meta_result["meta_probability"]
     confidence = meta_result["meta_confidence"]
+
+    has_home_stats = bool(home_stats and home_stats.wins > 0)
+    has_away_stats = bool(away_stats and away_stats.wins > 0)
+    data_quality = 0.0
+    if has_home_stats:
+        data_quality += 0.35
+    if has_away_stats:
+        data_quality += 0.35
+    if game["has_sharp"]:
+        data_quality += 0.15
+    if game["n_bookmakers"] >= 10:
+        data_quality += 0.15
+
+    model_trust = 0.15 + data_quality * 0.55
+    model_prob = raw_model_prob * model_trust + market_price * (1.0 - model_trust)
+    model_prob = float(np.clip(model_prob, 0.02, 0.98))
+
+    edge = model_prob - market_price
 
     if edge > 0:
         side = "HOME"
