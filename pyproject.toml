@@ -1,0 +1,23 @@
+[project]
+name = "ml-prediction-bot"
+version = "1.0.0"
+description = "7-level ML sports prediction bot for Polymarket + Kalshi with paper trading"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "python-telegram-bot>=21.0",
+    "pandas>=2.1.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.4.0",
+    "lightgbm>=4.2.0",
+    "xgboost>=2.0.0",
+    "catboost>=1.2.0",
+    "openai>=1.10.0",
+    "python-dotenv>=1.0.0",
+    "APScheduler>=3.10.0",
+    "aiosqlite>=0.19.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
