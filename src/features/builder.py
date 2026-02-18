@@ -288,7 +288,7 @@ class FeatureBuilder:
             "is_close_to_event": int(hours_to_event < 2),
             "is_far_from_event": int(hours_to_event > 24),
             "current_hour_utc": hour,
-            "is_us_daytime": int(13 <= hour <= 4),
+            "is_us_daytime": int(hour >= 13 or hour <= 4),
             "is_us_evening": int(0 <= hour <= 6),
             "day_of_week": day_of_week,
             "is_weekend": int(day_of_week >= 5),

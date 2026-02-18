@@ -163,6 +163,9 @@ class Orchestrator:
         if self.paper_engine.has_existing_trade(market.condition_id, "polymarket"):
             return None
 
+        if market.volume < config.min_volume:
+            return None
+
         home_team, away_team = self.feature_builder.extract_teams_from_question(market.question)
         if not home_team:
             return None
@@ -294,6 +297,9 @@ class Orchestrator:
         self, market: KalshiMarket, all_odds: list,
     ) -> dict | None:
         if self.paper_engine.has_existing_trade(market.ticker, "kalshi"):
+            return None
+
+        if market.volume < config.min_volume:
             return None
 
         home_team, away_team = self.feature_builder.extract_teams_from_question(market.title)

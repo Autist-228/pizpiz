@@ -3,8 +3,9 @@ import logging
 import sys
 from pathlib import Path
 
-from config import config
-from src.scanner.orchestrator import Orchestrator
+Path("data/logs").mkdir(parents=True, exist_ok=True)
+Path("data/models").mkdir(parents=True, exist_ok=True)
+Path("data/cache").mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,11 +17,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from config import config
+from src.scanner.orchestrator import Orchestrator
+
 
 async def main():
-    Path("data/logs").mkdir(parents=True, exist_ok=True)
-    Path("data/models").mkdir(parents=True, exist_ok=True)
-    Path("data/cache").mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
     logger.info("ML Sports Prediction Bot — Starting")
