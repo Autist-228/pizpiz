@@ -90,7 +90,7 @@ class HistoricalDataCollector:
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=60)
+                timeout=aiohttp.ClientTimeout(total=30)
             )
         return self._session
 
@@ -126,12 +126,8 @@ class HistoricalDataCollector:
         collected = 0
         offset = 0
         limit = 100
+        max_pages = 30
         cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
-
-        sport_tags = [
-            "sports", "nba", "nfl", "nhl", "mls", "ufc", "mma", "soccer",
-            "football", "basketball", "baseball", "tennis", "hockey",
-        ]
 
         while True:
             url = f"{self.gamma_url}/markets"
@@ -152,60 +148,56 @@ class HistoricalDataCollector:
                         break
 
                     batch_count = 0
+                    reached_cutoff = False
                     for market in data:
                         end_str = market.get("endDate") or market.get("end_date_iso")
-                        if not end_str:
+                        closed_str = market.get("closedTime", "")
+                        date_str = closed_str or end_str
+                        if not date_str:
                             continue
 
                         try:
                             end_date = datetime.fromisoformat(
-                                end_str.replace("Z", "+00:00")
+                                date_str.replace("Z", "+00:00")
                             )
                         except (ValueError, TypeError):
                             continue
 
                         if end_date < cutoff:
-                            continue
-
-                        tags_raw = market.get("tags", [])
-                        if isinstance(tags_raw, str):
-                            try:
-                                tags_list = json.loads(tags_raw)
-                            except (json.JSONDecodeError, ValueError):
-                                tags_list = [tags_raw]
-                        else:
-                            tags_list = tags_raw or []
-
-                        tags_lower = [
-                            t.lower() if isinstance(t, str) else str(t)
-                            for t in tags_list
-                        ]
-                        search = (
-                            market.get("question", "").lower()
-                            + " "
-                            + market.get("category", "").lower()
-                            + " "
-                            + " ".join(tags_lower)
-                        )
-                        if not any(tag in search for tag in sport_tags):
-                            continue
-
-                        result_str = market.get("resolution", "")
-                        if result_str == "Yes":
-                            result = 1
-                        elif result_str == "No":
-                            result = 0
-                        else:
+                            reached_cutoff = True
                             continue
 
                         prices_raw = market.get("outcomePrices", "")
                         if isinstance(prices_raw, str) and prices_raw:
-                            prices = json.loads(prices_raw)
-                            yes_price = float(prices[0]) if prices else 0.5
-                        elif isinstance(prices_raw, list) and prices_raw:
-                            yes_price = float(prices_raw[0])
+                            try:
+                                prices = json.loads(prices_raw)
+                            except (json.JSONDecodeError, ValueError):
+                                continue
+                        elif isinstance(prices_raw, list):
+                            prices = prices_raw
                         else:
-                            yes_price = 0.5
+                            continue
+
+                        if not prices or len(prices) < 2:
+                            continue
+
+                        try:
+                            yes_final = float(prices[0])
+                            no_final = float(prices[1])
+                        except (ValueError, TypeError):
+                            continue
+
+                        if yes_final >= 0.95:
+                            result = 1
+                        elif no_final >= 0.95:
+                            result = 0
+                        else:
+                            continue
+
+                        question = market.get("question", "")
+                        slug = market.get("slug", "")
+                        search_text = (question + " " + slug).lower()
+                        category = self._detect_sport_category(search_text)
 
                         cid = market.get(
                             "conditionId", market.get("condition_id", "")
@@ -213,22 +205,25 @@ class HistoricalDataCollector:
                         self._store_resolved_market(
                             market_id=cid,
                             platform="polymarket",
-                            question=market.get("question", ""),
-                            category=market.get("category", ""),
-                            tags=json.dumps(tags_lower),
-                            yes_price=yes_price,
+                            question=question,
+                            category=category,
+                            tags=json.dumps([category]) if category else "[]",
+                            yes_price=yes_final,
                             volume=float(market.get("volume", 0) or 0),
-                            end_date=end_str,
+                            end_date=date_str,
                             result=result,
                             raw=json.dumps(market),
                         )
                         batch_count += 1
 
                     collected += batch_count
-                    if len(data) < limit:
+                    if len(data) < limit or reached_cutoff:
                         break
                     offset += limit
-                    await asyncio.sleep(0.5)
+                    if offset >= limit * max_pages:
+                        logger.info(f"Polymarket: reached page limit ({max_pages})")
+                        break
+                    await asyncio.sleep(0.3)
 
             except Exception as e:
                 logger.error(f"Error collecting Polymarket history page {offset}: {e}")
@@ -236,18 +231,54 @@ class HistoricalDataCollector:
 
         return collected
 
+    @staticmethod
+    def _detect_sport_category(text: str) -> str:
+        sport_map = {
+            "nba": "basketball_nba",
+            "basketball": "basketball_nba",
+            "nfl": "americanfootball_nfl",
+            "nhl": "icehockey_nhl",
+            "hockey": "icehockey_nhl",
+            "mlb": "baseball_mlb",
+            "baseball": "baseball_mlb",
+            "ufc": "mma_mixed_martial_arts",
+            "mma": "mma_mixed_martial_arts",
+            "fight": "mma_mixed_martial_arts",
+            "premier league": "soccer_epl",
+            "epl": "soccer_epl",
+            "la liga": "soccer_spain_la_liga",
+            "serie a": "soccer_italy_serie_a",
+            "champions league": "soccer_uefa_champs_league",
+            "soccer": "soccer",
+            "tennis": "tennis",
+            "counter-strike": "esports_csgo",
+            "csgo": "esports_csgo",
+            "cs2": "esports_csgo",
+            "dota": "esports_dota2",
+            "league of legends": "esports_lol",
+        }
+        for keyword, cat in sport_map.items():
+            if keyword in text:
+                return cat
+        return ""
+
     async def _collect_kalshi_resolved(self, days_back: int) -> int:
         session = await self._get_session()
         collected = 0
         cursor: str | None = None
+        max_pages = 30
+        page_count = 0
         cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
-        sport_cats = [
-            "sports", "nba", "nfl", "nhl", "mlb", "mls", "ufc", "mma",
-            "soccer", "football", "basketball", "baseball", "hockey",
+        sport_ticker_prefixes = [
+            "KXNBA", "KXNFL", "KXNHL", "KXMLB", "KXUFC", "KXMMA",
+            "KXEPL", "KXLALIGA", "KXSERIEA", "KXUCL", "KXMLS",
+            "KXSOCCER", "KXTENNIS", "KXCRICKET",
+            "KXMVE",
         ]
 
-        while True:
+        while page_count < max_pages:
+            page_count += 1
             url = f"{self.kalshi_url}/markets"
             params: dict = {"limit": 200, "status": "settled"}
             if cursor:
@@ -262,6 +293,7 @@ class HistoricalDataCollector:
                     if not markets:
                         break
 
+                    reached_cutoff = False
                     for market in markets:
                         end_str = (
                             market.get("close_time")
@@ -278,17 +310,25 @@ class HistoricalDataCollector:
                             continue
 
                         if end_date < cutoff:
+                            reached_cutoff = True
                             continue
 
-                        search = (
-                            market.get("title", "").lower()
-                            + " "
-                            + market.get("category", "").lower()
-                            + " "
-                            + market.get("sub_category", "").lower()
+                        ticker = market.get("ticker", "")
+                        event_ticker = market.get("event_ticker", "")
+                        title = market.get("title", "")
+                        search_key = (ticker + " " + event_ticker).upper()
+
+                        is_sport = any(
+                            search_key.startswith(p) or p in search_key
+                            for p in sport_ticker_prefixes
                         )
-                        if not any(cat in search for cat in sport_cats):
-                            continue
+                        if not is_sport:
+                            search_text = (
+                                title.lower()
+                                + " " + market.get("category", "").lower()
+                                + " " + market.get("sub_category", "").lower()
+                            )
+                            is_sport = self._detect_sport_category(search_text) != ""
 
                         result_str = market.get("result", "")
                         if result_str == "yes":
@@ -296,17 +336,24 @@ class HistoricalDataCollector:
                         elif result_str == "no":
                             result = 0
                         else:
-                            continue
+                            exp_val = market.get("expiration_value", "")
+                            if exp_val == "":
+                                continue
+                            result = 1 if exp_val == "yes" else 0
 
                         yes_price = (
                             float(market.get("last_price", 50) or 50) / 100
                         )
 
+                        category = self._detect_sport_category(
+                            (title + " " + event_ticker).lower()
+                        )
+
                         self._store_resolved_market(
-                            market_id=market.get("ticker", ""),
+                            market_id=ticker,
                             platform="kalshi",
-                            question=market.get("title", ""),
-                            category=market.get("category", ""),
+                            question=title,
+                            category=category or market.get("category", ""),
                             tags=json.dumps(
                                 [market.get("sub_category", "").lower()]
                             ),
@@ -319,9 +366,9 @@ class HistoricalDataCollector:
                         collected += 1
 
                     cursor = data.get("cursor")
-                    if not cursor:
+                    if not cursor or reached_cutoff:
                         break
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.3)
 
             except Exception as e:
                 logger.error(f"Error collecting Kalshi history: {e}")
@@ -390,7 +437,7 @@ class HistoricalDataCollector:
     async def _collect_nba_games(self, days_back: int) -> int:
         session = await self._get_session()
         collected = 0
-        nba_url = "https://www.balldontlie.io/api/v1"
+        nba_url = "https://api.balldontlie.io/v1"
 
         now = datetime.now(timezone.utc)
         year = now.year if now.month > 9 else now.year - 1
