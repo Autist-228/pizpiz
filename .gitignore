@@ -3,7 +3,7 @@ __pycache__/
 *$py.class
 *.so
 .env
-data/
+/data/
 *.db
 *.pkl
 *.log

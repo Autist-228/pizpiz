@@ -22,6 +22,10 @@ from src.engine.kelly import KellyCriterion
 from src.engine.paper_trading import PaperTradingEngine, PaperTrade
 from src.crossmarket.analyzer import CrossMarketAnalyzer
 from src.telegram_bot.bot import TelegramBot
+from src.data.historical import HistoricalDataCollector
+from src.models.trainer import TrainingPipeline
+from src.engine.backtest import BacktestEngine
+from src.engine.risk_manager import RiskManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +48,51 @@ class Orchestrator:
         self.paper_engine = PaperTradingEngine()
         self.cross_market = CrossMarketAnalyzer()
         self.telegram = TelegramBot(self.paper_engine)
+        self.historical = HistoricalDataCollector()
+        self.trainer = TrainingPipeline()
+        self.backtest_engine = BacktestEngine()
+        self.risk_manager = RiskManager(self.paper_engine)
 
         self.prev_features: dict[str, dict] = {}
         self.running = False
+        self._scan_count = 0
+        self._retrain_every_n_scans = 48
 
     async def initialize(self):
         logger.info("Initializing orchestrator...")
+
+        self.telegram._risk_manager = self.risk_manager
+
+        logger.info("Collecting historical data...")
+        try:
+            total = await self.historical.collect_all(days_back=180)
+            logger.info(f"Historical data: {total} total records")
+        except Exception as e:
+            logger.error(f"Historical collection error: {e}")
+
+        logger.info("Training ML models...")
+        try:
+            train_result = self.trainer.run_training()
+            if train_result.get("status") == "success":
+                logger.info("ML models trained successfully")
+                await self.telegram.send_training_report(train_result)
+            else:
+                logger.info(f"Training: {train_result.get('status')}")
+        except Exception as e:
+            logger.error(f"Training error: {e}")
+
         self.ensemble.load_models()
+
+        logger.info("Running backtest...")
+        try:
+            bt_result = self.backtest_engine.run_backtest()
+            if bt_result.total_trades > 0:
+                report = self.backtest_engine.format_report(bt_result)
+                logger.info(f"Backtest: {bt_result.total_trades} trades, WR={bt_result.win_rate:.1%}")
+                await self.telegram.send_backtest_report(report)
+        except Exception as e:
+            logger.error(f"Backtest error: {e}")
+
         await self.telegram.initialize()
         logger.info("Orchestrator initialized")
 
@@ -61,6 +103,7 @@ class Orchestrator:
         await self.odds_api.close()
         await self.sports_stats.close()
         await self.news_client.close()
+        await self.historical.close()
         await self.telegram.shutdown()
         logger.info("Orchestrator shut down")
 
@@ -77,6 +120,10 @@ class Orchestrator:
                 await self.telegram.send_error(f"Scan error: {str(e)[:200]}")
 
             await self._check_resolutions()
+
+            self._scan_count += 1
+            if self._scan_count % self._retrain_every_n_scans == 0:
+                await self._auto_retrain()
 
             stats = self.paper_engine.get_stats()
             if stats["total_trades"] > 0 and stats["total_trades"] % 10 == 0:
@@ -429,7 +476,29 @@ class Orchestrator:
             },
         }
 
+    async def _auto_retrain(self):
+        logger.info("Auto-retrain: collecting new data and retraining...")
+        try:
+            await self.historical.collect_all(days_back=30)
+            result = self.trainer.run_training()
+            if result.get("status") == "success":
+                self.ensemble.load_models()
+                await self.telegram.send_training_report(result)
+                logger.info("Auto-retrain complete")
+            else:
+                logger.info(f"Auto-retrain: {result.get('status')}")
+        except Exception as e:
+            logger.error(f"Auto-retrain error: {e}")
+
     async def _execute_signal(self, signal: dict) -> bool:
+        allowed, reason = self.risk_manager.check_trade_allowed(signal)
+        if not allowed:
+            logger.info(f"Risk manager blocked trade: {reason}")
+            await self.telegram.send_risk_alert(reason)
+            return False
+
+        signal["bet_size"] = self.risk_manager.adjust_bet_size(signal)
+
         trade = PaperTrade(
             trade_id=f"PT-{uuid.uuid4().hex[:8]}",
             event_id=signal["event_id"],
@@ -487,6 +556,8 @@ class Orchestrator:
         if resolved:
             self.kelly.update_bankroll(resolved.pnl or 0)
             self.meta_model.update_calibration(trade.model_prob, int(outcome))
+            won = resolved.result == "WIN"
+            self.risk_manager.update_after_resolution(won)
         return resolved
 
     async def _check_outcome(self, trade: PaperTrade) -> bool | None:
