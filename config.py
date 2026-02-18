@@ -11,6 +11,7 @@ class Config:
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     odds_api_key: str = os.getenv("ODDS_API_KEY", "")
+    api_football_key: str = os.getenv("API_FOOTBALL_KEY", "")
 
     initial_bankroll: float = float(os.getenv("INITIAL_BANKROLL", "500"))
     min_edge: float = float(os.getenv("MIN_EDGE", "0.08"))
@@ -35,7 +36,12 @@ class Config:
         "basketball_nba",
         "americanfootball_nfl",
         "soccer_epl",
+        "soccer_spain_la_liga",
+        "soccer_italy_serie_a",
+        "soccer_germany_bundesliga",
+        "soccer_france_ligue_one",
         "soccer_usa_mls",
+        "soccer_uefa_champs_league",
         "mma_mixed_martial_arts",
         "icehockey_nhl",
     ])
