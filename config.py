@@ -12,6 +12,7 @@ class Config:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     odds_api_key: str = os.getenv("ODDS_API_KEY", "")
     api_football_key: str = os.getenv("API_FOOTBALL_KEY", "")
+    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
 
     initial_bankroll: float = float(os.getenv("INITIAL_BANKROLL", "500"))
     min_edge: float = float(os.getenv("MIN_EDGE", "0.08"))

@@ -10,10 +10,19 @@ logger = logging.getLogger(__name__)
 class SentimentAnalyzer:
     def __init__(self):
         self.openai_client = None
-        self._init_openai()
+        self.anthropic_client = None
+        self._init_llm()
 
-    def _init_openai(self):
-        if config.openai_api_key:
+    def _init_llm(self):
+        anthropic_key = getattr(config, "anthropic_api_key", "")
+        if anthropic_key:
+            try:
+                import anthropic
+                self.anthropic_client = anthropic.AsyncAnthropic(api_key=anthropic_key)
+                logger.info("Anthropic Claude client initialized for NLP layer")
+            except Exception as e:
+                logger.warning(f"Could not init Anthropic: {e}")
+        elif config.openai_api_key:
             try:
                 from openai import AsyncOpenAI
                 self.openai_client = AsyncOpenAI(api_key=config.openai_api_key)
@@ -29,10 +38,70 @@ class SentimentAnalyzer:
         news_items: list,
         market_price: float,
     ) -> dict:
+        if self.anthropic_client:
+            return await self._claude_analysis(
+                home_team, away_team, sport, news_items, market_price
+            )
         if self.openai_client:
             return await self._gpt_analysis(
                 home_team, away_team, sport, news_items, market_price
             )
+        return self._rule_based_analysis(news_items, market_price)
+
+    async def _claude_analysis(
+        self,
+        home_team: str,
+        away_team: str,
+        sport: str,
+        news_items: list,
+        market_price: float,
+    ) -> dict:
+        news_text = ""
+        for item in news_items[:5]:
+            news_text += f"- {item.title}\n"
+
+        prompt = f"""Analyze this sports matchup for betting value:
+
+Sport: {sport}
+Home: {home_team}
+Away: {away_team}
+Current market probability (home win): {market_price:.1%}
+
+Recent news:
+{news_text if news_text else "No recent news available."}
+
+Rate from -1.0 (strong away) to +1.0 (strong home):
+1. injury_impact: How do injuries affect this matchup?
+2. momentum: Which team has better recent momentum?
+3. matchup_quality: How good is this matchup for betting?
+4. news_sentiment: What does news suggest about outcome?
+5. overall_edge: Is market price fair, too high, or too low for home team?
+
+Respond ONLY with these 5 numbers separated by commas. Example: 0.3,-0.1,0.5,0.2,0.15"""
+
+        try:
+            response = await self.anthropic_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=100,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = response.content[0].text.strip()
+            values = [float(v.strip()) for v in text.split(",")]
+
+            if len(values) >= 5:
+                return {
+                    "injury_impact": float(np.clip(values[0], -1, 1)),
+                    "momentum_signal": float(np.clip(values[1], -1, 1)),
+                    "matchup_quality": float(np.clip(values[2], -1, 1)),
+                    "news_sentiment": float(np.clip(values[3], -1, 1)),
+                    "overall_edge": float(np.clip(values[4], -1, 1)),
+                    "combined_nlp_signal": float(np.mean(values[:5])),
+                    "source": "claude",
+                    "confidence": 0.75,
+                }
+        except Exception as e:
+            logger.warning(f"Claude analysis error: {e}")
+
         return self._rule_based_analysis(news_items, market_price)
 
     async def _gpt_analysis(

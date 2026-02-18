@@ -96,8 +96,8 @@ class CrossMarketAnalyzer:
             "best_platform": best,
             "scores": scores,
             "cross_arb": cross_arb,
-            "recommendation": self._make_recommendation(
-                best, scores, poly_price, kalshi_price, model_prob
+            "recommendation": self._generate_recommendation(
+                poly_price, kalshi_price, model_prob, best, cross_arb.get("arb_exists", False)
             ),
         }
 
