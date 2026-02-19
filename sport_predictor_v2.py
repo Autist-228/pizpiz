@@ -1621,7 +1621,7 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
 
             odds = match_odds_to_game(game, odds_data)
             if not odds:
-                analysis.skip_reason = "No bookmaker odds available"
+                analysis.skip_reason = "Нет коэффициентов букмекеров"
                 all_analyses.append(analysis)
                 continue
 
@@ -1635,9 +1635,9 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
             away_form = team_forms.get(vt)
 
             if home_form and home_form.games > 0:
-                analysis.home_form_str = f"{home_form.wins}W-{home_form.losses}L L10:{home_form.last10_wins}-{home_form.last10_losses} PPG:{home_form.ppg:.1f}"
+                analysis.home_form_str = f"{home_form.wins}П-{home_form.losses}П L10:{home_form.last10_wins}-{home_form.last10_losses} Очк:{home_form.ppg:.1f}"
             if away_form and away_form.games > 0:
-                analysis.away_form_str = f"{away_form.wins}W-{away_form.losses}L L10:{away_form.last10_wins}-{away_form.last10_losses} PPG:{away_form.ppg:.1f}"
+                analysis.away_form_str = f"{away_form.wins}П-{away_form.losses}П L10:{away_form.last10_wins}-{away_form.last10_losses} Очк:{away_form.ppg:.1f}"
 
             inj_home = get_injury_impact(injuries, ht) if injuries else 0.0
             inj_away = get_injury_impact(injuries, vt) if injuries else 0.0
@@ -1684,7 +1684,8 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
                 )
                 claude_calls += 1
                 if claude_result and claude_result.get("pick"):
-                    analysis.claude_note = f"{claude_result['pick']} ({claude_result.get('confidence', 0):.0%}) — {claude_result.get('reasoning', '')[:80]}"
+                    pick_ru = "ДОМ" if claude_result['pick'] == "HOME" else "ГОСТИ"
+                    analysis.claude_note = f"{pick_ru} ({claude_result.get('confidence', 0):.0%}) — {claude_result.get('reasoning', '')[:80]}"
                     logger.info(f"  Claude: {ht} vs {vt} -> {claude_result['pick']}")
                 await asyncio.sleep(1)
 
@@ -1727,12 +1728,12 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
                 max_edge = max(home_edge, away_edge)
                 reasons = []
                 if max_conf < MIN_CONFIDENCE:
-                    reasons.append(f"Low confidence ({max_conf:.0%} < {MIN_CONFIDENCE:.0%})")
+                    reasons.append(f"Низкая уверенность ({max_conf:.0%} < {MIN_CONFIDENCE:.0%})")
                 if max_edge < MIN_EDGE:
-                    reasons.append(f"Low edge ({max_edge:.1%} < {MIN_EDGE:.0%})")
+                    reasons.append(f"Низкий эдж ({max_edge:.1%} < {MIN_EDGE:.0%})")
                 if odds["n_bookmakers"] < 3:
-                    reasons.append(f"Too few bookmakers ({odds['n_bookmakers']})")
-                analysis.skip_reason = " | ".join(reasons) if reasons else "No edge found"
+                    reasons.append(f"Мало букмекеров ({odds['n_bookmakers']})")
+                analysis.skip_reason = " | ".join(reasons) if reasons else "Нет эджа"
                 analysis.confidence = max_conf
                 analysis.edge = max_edge
                 logger.info(f"  SKIP: {ht} vs {vt} | {analysis.skip_reason}")
@@ -1798,7 +1799,7 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
                 logger.info(f"  BET: {signal.pick} {signal.pick_team} [{odds_entry['sport']}] | conf={signal.confidence:.0%}")
             else:
                 max_edge_val = max(abs(home_edge), abs(away_edge))
-                analysis.skip_reason = f"Edge too low ({max_edge_val:.1%})" if max_edge_val < MIN_EDGE else "No edge"
+                analysis.skip_reason = f"Низкий эдж ({max_edge_val:.1%})" if max_edge_val < MIN_EDGE else "Нет эджа"
                 analysis.confidence = max(odds_entry["sharp_home"], odds_entry["sharp_away"])
                 analysis.edge = max_edge_val
 
