@@ -21,7 +21,7 @@ Logic:
 - Triple confirmation: our model + Claude + bookmakers must agree
 - Kelly Criterion sizes each bet based on confidence + edge
 - Drawdown protection: reduce bets when losing
-- Only signal when confidence > 55% AND edge > 3%
+- Only signal when confidence > 52% AND edge > 2%
 """
 
 import asyncio
@@ -58,7 +58,7 @@ BASE_BET = 5.0
 MIN_CONFIDENCE = 0.52
 MIN_EDGE = 0.02
 MAX_BET_PCT = 0.08
-WINDOW_HOURS = 24
+WINDOW_HOURS = 48
 AUTOPILOT_INTERVAL = 1800
 KELLY_FRACTION = 0.25
 
@@ -70,7 +70,12 @@ SOCCER_SPORTS = [
     "soccer_germany_bundesliga", "soccer_france_ligue_one",
     "soccer_uefa_champs_league",
 ]
-ALL_SPORTS = NBA_SPORTS + SOCCER_SPORTS
+HOCKEY_SPORTS = ["icehockey_nhl"]
+MMA_SPORTS = ["mma_mixed_martial_arts"]
+TENNIS_SPORTS = ["tennis_atp_french_open", "tennis_atp_aus_open"]
+BASEBALL_SPORTS = ["baseball_mlb"]
+FOOTBALL_SPORTS = ["americanfootball_nfl"]
+ALL_SPORTS = NBA_SPORTS + SOCCER_SPORTS + HOCKEY_SPORTS + MMA_SPORTS + TENNIS_SPORTS + BASEBALL_SPORTS + FOOTBALL_SPORTS
 
 DATA_DIR = Path("data")
 SIGNALS_FILE = DATA_DIR / "signals_history.json"
@@ -424,9 +429,10 @@ def build_team_forms(games: list[dict]) -> dict[str, TeamForm]:
 async def fetch_todays_nba_games(session: aiohttp.ClientSession) -> list[dict]:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+    day_after = (datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%d")
 
     all_games = []
-    for date in [today, tomorrow]:
+    for date in [today, tomorrow, day_after]:
         url = "https://api.balldontlie.io/v1/games"
         params = {"dates[]": date, "per_page": 100}
         try:
@@ -480,10 +486,16 @@ async def fetch_odds_api(session: aiohttp.ClientSession) -> dict:
             "oddsFormat": "decimal",
         }
         try:
+            await asyncio.sleep(1.2)
             async with session.get(url, params=params) as resp:
                 if resp.status == 429:
-                    logger.warning(f"Odds API rate limited on {sport}")
-                    continue
+                    logger.warning(f"Odds API rate limited on {sport}, waiting 5s...")
+                    await asyncio.sleep(5)
+                    async with session.get(url, params=params) as resp2:
+                        if resp2.status == 200:
+                            resp = resp2
+                        else:
+                            continue
                 if resp.status != 200:
                     continue
                 events = await resp.json()
@@ -634,6 +646,7 @@ async def claude_analyze_game(
     injury_home: float,
     injury_away: float,
     public_home_pct: float,
+    sport: str = "basketball_nba",
 ) -> dict:
     if not ANTHROPIC_API_KEY:
         return {"pick": "", "confidence": 0, "reasoning": "No API key"}
@@ -652,14 +665,21 @@ async def claude_analyze_game(
                   f"PPG: {away_form.ppg:.1f} | Net: {away_form.net_rating:+.1f} | "
                   f"Rest: {away_form.days_rest}d | Streak: {away_form.streak}")
 
-    prompt = f"""You are an NBA betting analyst. Analyze this game and predict the winner.
+    sport_name = sport.replace("_", " ").title()
+    is_nba = "nba" in sport.lower()
+    analyst_role = "sports betting analyst" if not is_nba else "NBA betting analyst"
+    form_section = ""
+    if is_nba:
+        form_section = f"\nHOME FORM (last 45 days): {hf_str}\nAWAY FORM (last 45 days): {af_str}\n"
+    else:
+        form_section = "\nNo detailed form data available. Use your knowledge of these teams.\n"
 
-GAME: {home_team} (HOME) vs {away_team} (AWAY)
+    prompt = f"""You are a {analyst_role}. Analyze this {sport_name} match and predict the winner.
 
-HOME FORM (last 45 days): {hf_str}
-AWAY FORM (last 45 days): {af_str}
-
-BOOKMAKER CONSENSUS: Home {book_home:.0%} / Away {book_away:.0%} (44 bookmakers avg)
+MATCH: {home_team} (HOME) vs {away_team} (AWAY)
+SPORT: {sport_name}
+{form_section}
+BOOKMAKER CONSENSUS: Home {book_home:.0%} / Away {book_away:.0%} (multiple bookmakers avg)
 INJURY IMPACT: Home -{injury_home:.0%} / Away -{injury_away:.0%}
 PUBLIC BETTING: {public_home_pct:.0%} on home
 
@@ -850,6 +870,10 @@ def kelly_bet_size(confidence: float, edge: float, bankroll: float,
     bet = min(bet, bankroll * MAX_BET_PCT)
     bet = round(bet, 2)
 
+    payout_est = bet * (1.0 / max(confidence - edge, 0.01) - 1) if confidence > edge else 0
+    if payout_est > 0 and payout_est < bet * 0.25:
+        return 0.0
+
     return bet
 
 
@@ -923,6 +947,9 @@ def generate_signal(
     bankroll = state.bankroll if state else BANKROLL
     cautious = state.is_cautious_mode() if state else False
     bet_size = kelly_bet_size(confidence, edge, bankroll, cautious, book_price=price)
+
+    if bet_size <= 0:
+        return None
 
     payout = bet_size * (1.0 / max(price, 0.01) - 1)
     loss = -bet_size
@@ -1196,7 +1223,7 @@ async def _tg_answer_cb(callback_query_id: str):
 def _main_keyboard() -> dict:
     return {"inline_keyboard": [
         [{"text": "📊 Дашборд", "callback_data": "dash"}],
-        [{"text": "💼 Позиции", "callback_data": "positions"}, {"text": "🎯 События 6ч", "callback_data": "events"}],
+        [{"text": "💼 Позиции", "callback_data": "positions"}, {"text": f"🎯 События {WINDOW_HOURS}ч", "callback_data": "events"}],
         [{"text": "📈 Статистика", "callback_data": "stats"}, {"text": "📝 История", "callback_data": "history"}],
         [{"text": "🔍 Скан сейчас", "callback_data": "scan"}, {"text": "⚙️ Настройки", "callback_data": "settings"}],
     ]}
@@ -1414,17 +1441,17 @@ def build_history_text(state: BotState) -> str:
 def build_events_text(all_analyses: list[GameAnalysis]) -> str:
     if not all_analyses:
         return (
-            "🎯 <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>\n"
-            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-            "😴 \u0421\u043e\u0431\u044b\u0442\u0438\u0439 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e\n\n"
-            "🔄 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 30 \u043c\u0438\u043d</i>"
+                f"🎯 <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f ({WINDOW_HOURS}\u0447)</b>\n"
+                "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+                "😴 \u0421\u043e\u0431\u044b\u0442\u0438\u0439 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e\n\n"
+                f"🔄 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d</i>"
         )
 
     bets = [a for a in all_analyses if a.verdict == "BET"]
     skips = [a for a in all_analyses if a.verdict != "BET"]
 
     lines = [
-        "🎯 <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>",
+        f"🎯 <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f ({WINDOW_HOURS}\u0447)</b>",
         "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
         f"📊 \u0412\u0441\u0435\u0433\u043e: {len(all_analyses)}  |  🟢 \u0421\u0442\u0430\u0432\u0438\u043c: {len(bets)}  |  \u26d4 \u041f\u0440\u043e\u043f\u0443\u0441\u043a: {len(skips)}",
         "",
@@ -1637,9 +1664,9 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
             away_form = team_forms.get(vt)
 
             if home_form and home_form.games > 0:
-                analysis.home_form_str = f"{home_form.wins}П-{home_form.losses}П L10:{home_form.last10_wins}-{home_form.last10_losses} Очк:{home_form.ppg:.1f}"
+                analysis.home_form_str = f"{home_form.wins}В-{home_form.losses}П L10:{home_form.last10_wins}-{home_form.last10_losses} Очк:{home_form.ppg:.1f}"
             if away_form and away_form.games > 0:
-                analysis.away_form_str = f"{away_form.wins}П-{away_form.losses}П L10:{away_form.last10_wins}-{away_form.last10_losses} Очк:{away_form.ppg:.1f}"
+                analysis.away_form_str = f"{away_form.wins}В-{away_form.losses}П L10:{away_form.last10_wins}-{away_form.last10_losses} Очк:{away_form.ppg:.1f}"
 
             inj_home = get_injury_impact(injuries, ht) if injuries else 0.0
             inj_away = get_injury_impact(injuries, vt) if injuries else 0.0
@@ -1671,7 +1698,7 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
             analysis.our_away_prob = pred["our_away"]
 
             claude_result = None
-            if use_claude and ANTHROPIC_API_KEY and claude_calls < 15:
+            if use_claude and ANTHROPIC_API_KEY and claude_calls < 30:
                 claude_result = await claude_analyze_game(
                     session=session,
                     home_team=ht,
@@ -1765,30 +1792,56 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
             total_analyzed += 1
             start_str = dt.strftime("%H:%M UTC")
 
+            best_home_odds = odds_entry.get("best_home_odds", 0)
+            best_away_odds = odds_entry.get("best_away_odds", 0)
+            best_home_imp = (1.0 / best_home_odds) if best_home_odds > 1 else odds_entry["home_prob"]
+            best_away_imp = (1.0 / best_away_odds) if best_away_odds > 1 else odds_entry["away_prob"]
+
+            our_home = odds_entry["sharp_home"]
+            our_away = odds_entry["sharp_away"]
+            value_home_edge = our_home - best_home_imp
+            value_away_edge = our_away - best_away_imp
+
             analysis = GameAnalysis(
                 home_team=home, away_team=away, sport=odds_entry["sport"], start_time=start_str,
-                book_home_prob=odds_entry["home_prob"], book_away_prob=odds_entry["away_prob"],
-                our_home_prob=odds_entry["sharp_home"], our_away_prob=odds_entry["sharp_away"],
+                book_home_prob=best_home_imp, book_away_prob=best_away_imp,
+                our_home_prob=our_home, our_away_prob=our_away,
                 n_bookmakers=odds_entry["n_bookmakers"], has_sharp=odds_entry["has_sharp"],
             )
 
-            home_edge = odds_entry["sharp_home"] - odds_entry["home_prob"]
-            away_edge = odds_entry["sharp_away"] - odds_entry["away_prob"]
+            claude_result = None
+            max_val_edge = max(value_home_edge, value_away_edge)
+            if use_claude and ANTHROPIC_API_KEY and claude_calls < 30 and max_val_edge > 0.01:
+                claude_result = await claude_analyze_game(
+                    session=session,
+                    home_team=home,
+                    away_team=away,
+                    home_form=None,
+                    away_form=None,
+                    book_home=odds_entry["home_prob"],
+                    book_away=odds_entry["away_prob"],
+                    injury_home=0.0,
+                    injury_away=0.0,
+                    public_home_pct=0.5,
+                    sport=odds_entry["sport"],
+                )
+                claude_calls += 1
 
             signal = generate_signal(
                 home_team=home,
                 away_team=away,
                 sport=odds_entry["sport"],
                 start_time=start_str,
-                book_home=odds_entry["home_prob"],
-                book_away=odds_entry["away_prob"],
-                our_home=odds_entry["sharp_home"],
-                our_away=odds_entry["sharp_away"],
+                book_home=best_home_imp,
+                book_away=best_away_imp,
+                our_home=our_home,
+                our_away=our_away,
                 n_bookmakers=odds_entry["n_bookmakers"],
                 has_sharp=odds_entry["has_sharp"],
                 home_form=None,
                 away_form=None,
-                adjustments={"sharp_vs_market": max(home_edge, away_edge)},
+                adjustments={"value_edge": max_val_edge},
+                claude_result=claude_result,
                 state=state,
             )
             if signal:
@@ -1798,11 +1851,11 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
                 analysis.verdict_team = signal.pick_team
                 analysis.confidence = signal.confidence
                 analysis.edge = signal.edge
-                logger.info(f"  BET: {signal.pick} {signal.pick_team} [{odds_entry['sport']}] | conf={signal.confidence:.0%}")
+                logger.info(f"  BET: {signal.pick} {signal.pick_team} [{odds_entry['sport']}] | conf={signal.confidence:.0%} edge={signal.edge:.1%}")
             else:
-                max_edge_val = max(abs(home_edge), abs(away_edge))
+                max_edge_val = max(abs(value_home_edge), abs(value_away_edge))
                 analysis.skip_reason = f"Низкий эдж ({max_edge_val:.1%})" if max_edge_val < MIN_EDGE else "Нет эджа"
-                analysis.confidence = max(odds_entry["sharp_home"], odds_entry["sharp_away"])
+                analysis.confidence = max(our_home, our_away)
                 analysis.edge = max_edge_val
 
             all_analyses.append(analysis)
