@@ -796,12 +796,16 @@ def predict_nba_game(
     }
 
 
-def kelly_bet_size(confidence: float, edge: float, bankroll: float, cautious: bool = False) -> float:
+def kelly_bet_size(confidence: float, edge: float, bankroll: float,
+                   cautious: bool = False, book_price: float = 0.0) -> float:
     if edge <= 0 or confidence < MIN_CONFIDENCE:
         return 0.0
 
-    implied_odds = 1.0 / max(confidence, 0.01)
-    b = implied_odds - 1.0
+    if book_price > 0:
+        b = (1.0 / max(book_price, 0.01)) - 1.0
+    else:
+        b = (1.0 / max(confidence - edge, 0.01)) - 1.0
+
     p = confidence
     q = 1 - p
 
@@ -816,7 +820,7 @@ def kelly_bet_size(confidence: float, edge: float, bankroll: float, cautious: bo
         kelly *= 0.5
 
     bet = bankroll * kelly
-    bet = max(bet, 5.0)
+    bet = max(bet, BASE_BET)
     bet = min(bet, bankroll * MAX_BET_PCT)
     bet = round(bet, 2)
 
@@ -892,7 +896,7 @@ def generate_signal(
 
     bankroll = state.bankroll if state else BANKROLL
     cautious = state.is_cautious_mode() if state else False
-    bet_size = kelly_bet_size(confidence, edge, bankroll, cautious)
+    bet_size = kelly_bet_size(confidence, edge, bankroll, cautious, book_price=price)
 
     payout = bet_size * (1.0 / max(price, 0.01) - 1)
     loss = -bet_size
@@ -1156,7 +1160,7 @@ async def send_telegram(predictions: list[GamePrediction], all_games_count: int,
             resp = await client.post(url, json={
                 "chat_id": TELEGRAM_CHAT_ID,
                 "text": msg,
-                "parse_mode": "HTML",
+                "parse_mode": "",
             })
             if resp.status_code == 200:
                 logger.info("Telegram report sent!")

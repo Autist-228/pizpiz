@@ -40,21 +40,87 @@ def _get_driver():
 
 
 def scrape_covers_nba() -> list[PublicBetting]:
-    logger.info("Scraping Covers.com NBA public betting...")
+    logger.info("Scraping public betting data...")
+    results: list[PublicBetting] = []
+
+    results = _scrape_actionnetwork()
+    if results:
+        return results
+
+    results = _scrape_covers_selenium()
+    return results
+
+
+def _scrape_actionnetwork() -> list[PublicBetting]:
+    import requests
+    results: list[PublicBetting] = []
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+        }
+        resp = requests.get(
+            "https://api.actionnetwork.com/web/v1/scoreboard/nba",
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"ActionNetwork API: {resp.status_code}")
+            return []
+
+        data = resp.json()
+        games = data.get("games", [])
+        for game in games:
+            teams = game.get("teams", [])
+            if len(teams) < 2:
+                continue
+
+            away_team = teams[0].get("full_name", "")
+            home_team = teams[1].get("full_name", "")
+
+            betting = game.get("betting", {}) or {}
+            ml = betting.get("moneyline", {}) or {}
+            public = ml.get("ticket_pct", {}) or {}
+
+            away_pct = public.get("away", 50) / 100
+            home_pct = public.get("home", 50) / 100
+
+            if away_pct == 0.5 and home_pct == 0.5:
+                spread = betting.get("spread", {}) or {}
+                spread_pub = spread.get("ticket_pct", {}) or {}
+                away_pct = spread_pub.get("away", 50) / 100
+                home_pct = spread_pub.get("home", 50) / 100
+
+            results.append(PublicBetting(
+                home_team=home_team,
+                away_team=away_team,
+                home_pct=home_pct,
+                away_pct=away_pct,
+                home_spread="",
+                total="",
+                line_movement="",
+            ))
+
+        logger.info(f"ActionNetwork: {len(results)} games with public betting data")
+    except Exception as e:
+        logger.warning(f"ActionNetwork scrape failed: {e}")
+
+    return results
+
+
+def _scrape_covers_selenium() -> list[PublicBetting]:
+    logger.info("Trying Covers.com via Selenium...")
     driver = _get_driver()
     results: list[PublicBetting] = []
 
     try:
         driver.get("https://www.covers.com/sport/basketball/nba/consensus")
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
         import time
-        time.sleep(3)
+        time.sleep(5)
 
         soup = BeautifulSoup(driver.page_source, "lxml")
 
-        rows = soup.find_all("div", class_=re.compile(r"covers-CoversConsensus|consensus", re.I))
+        rows = soup.find_all("div", class_=re.compile(r"consensus|matchup|game-card", re.I))
         if not rows:
             rows = soup.find_all("tr")
 
