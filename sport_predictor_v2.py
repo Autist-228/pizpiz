@@ -1119,15 +1119,26 @@ def format_report(predictions: list[GamePrediction], all_games_count: int, state
 
 def _conf_bar(conf: float) -> str:
     filled = round(conf * 10)
-    return "[" + "=" * filled + " " * (10 - filled) + f"] {conf:.0%}"
+    empty = 10 - filled
+    return "█" * filled + "░" * empty + f" {conf:.0%}"
 
 
 def _sport_icon(sport: str) -> str:
     if "basketball" in sport or "nba" in sport:
-        return "B"
+        return "🏀"
     if "soccer" in sport or "epl" in sport or "liga" in sport or "serie" in sport or "bundesliga" in sport or "ligue" in sport or "champs" in sport:
-        return "S"
-    return "?"
+        return "⚽"
+    if "hockey" in sport or "nhl" in sport:
+        return "🏒"
+    if "baseball" in sport or "mlb" in sport:
+        return "⚾"
+    if "football" in sport or "nfl" in sport:
+        return "🏈"
+    if "tennis" in sport:
+        return "🎾"
+    if "mma" in sport or "ufc" in sport:
+        return "🥊"
+    return "🎯"
 
 
 async def _tg_send(text: str, reply_markup: dict | None = None, chat_id: str = ""):
@@ -1184,22 +1195,22 @@ async def _tg_answer_cb(callback_query_id: str):
 
 def _main_keyboard() -> dict:
     return {"inline_keyboard": [
-        [{"text": "-- DASHBOARD --", "callback_data": "dash"}],
-        [{"text": "-- OPEN POSITIONS --", "callback_data": "positions"}, {"text": "-- EVENTS 6H --", "callback_data": "events"}],
-        [{"text": "-- STATS --", "callback_data": "stats"}, {"text": "-- HISTORY --", "callback_data": "history"}],
-        [{"text": "-- SCAN NOW --", "callback_data": "scan"}, {"text": "-- SETTINGS --", "callback_data": "settings"}],
+        [{"text": "📊 Дашборд", "callback_data": "dash"}],
+        [{"text": "💼 Позиции", "callback_data": "positions"}, {"text": "🎯 События 6ч", "callback_data": "events"}],
+        [{"text": "📈 Статистика", "callback_data": "stats"}, {"text": "📝 История", "callback_data": "history"}],
+        [{"text": "🔍 Скан сейчас", "callback_data": "scan"}, {"text": "⚙️ Настройки", "callback_data": "settings"}],
     ]}
 
 
 def _back_keyboard() -> dict:
-    return {"inline_keyboard": [[{"text": "<< BACK", "callback_data": "dash"}]]}
+    return {"inline_keyboard": [[{"text": "◀️ Назад", "callback_data": "dash"}]]}
 
 
 def _settings_keyboard(state: BotState) -> dict:
     return {"inline_keyboard": [
-        [{"text": "Balance +100", "callback_data": "bal_add_100"}, {"text": "Balance -100", "callback_data": "bal_sub_100"}],
-        [{"text": "Balance +500", "callback_data": "bal_add_500"}, {"text": "Reset to $500", "callback_data": "bal_reset"}],
-        [{"text": "<< BACK", "callback_data": "dash"}],
+        [{"text": "➕ $100", "callback_data": "bal_add_100"}, {"text": "➖ $100", "callback_data": "bal_sub_100"}],
+        [{"text": "➕ $500", "callback_data": "bal_add_500"}, {"text": "🔄 Сброс $500", "callback_data": "bal_reset"}],
+        [{"text": "◀️ Назад", "callback_data": "dash"}],
     ]}
 
 
@@ -1244,28 +1255,38 @@ def build_dashboard_text(state: BotState) -> str:
     pending = [h for h in state.history if h.get("result") == "pending"]
     pending_exposure = sum(h.get("bet_size", 0) for h in pending)
 
-    mode_str = "!! CAUTIOUS (DD &gt;20%)" if state.is_cautious_mode() else "NORMAL"
+    if state.is_cautious_mode():
+        mode_str = "\u26a0\ufe0f \u041e\u0421\u0422\u041e\u0420\u041e\u0416\u041d\u041e (DD &gt;20%)"
+    else:
+        mode_str = "\u2705 \u041d\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u044b\u0439"
+
+    pnl_all_icon = "\ud83d\udfe2" if state.total_pnl >= 0 else "\ud83d\udd34"
+    pnl_today_icon = "\ud83d\udfe2" if pnl_today >= 0 else "\ud83d\udd34"
+    pnl_7d_icon = "\ud83d\udfe2" if pnl_7d >= 0 else "\ud83d\udd34"
     pnl_sign = "+" if state.total_pnl >= 0 else ""
     pnl_today_sign = "+" if pnl_today >= 0 else ""
     pnl_7d_sign = "+" if pnl_7d >= 0 else ""
 
+    streak_icon = "\ud83d\udd25" if state.current_streak > 0 else ("\u2744\ufe0f" if state.current_streak < 0 else "\u2796")
+
     return (
-        f"<b>======= TRADING TERMINAL =======</b>\n"
-        f"  {now.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-        f"<b>BALANCE:</b>  <code>${state.bankroll:.2f}</code>\n"
-        f"<b>P&amp;L ALL:</b>  <code>{pnl_sign}${state.total_pnl:.2f}</code>\n"
-        f"<b>P&amp;L 7D:</b>   <code>{pnl_7d_sign}${pnl_7d:.2f}</code>  ({wins_7d}W/{losses_7d}L)\n"
-        f"<b>P&amp;L TODAY:</b> <code>{pnl_today_sign}${pnl_today:.2f}</code>  ({wins_today}W/{losses_today}L)\n\n"
-        f"<b>OPEN:</b>  {len(pending)} positions  (${pending_exposure:.2f} exposed)\n"
-        f"<b>TOTAL:</b> {state.signals_total} trades\n"
-        f"<b>W/L:</b>   {state.signals_won}W / {state.signals_lost}L\n"
-        f"<b>WINRATE:</b> <code>{state.win_rate:.0%}</code>\n"
-        f"<b>ROI:</b>   <code>{state.roi:+.1f}%</code>\n"
-        f"<b>STREAK:</b> {state.current_streak}\n"
-        f"<b>MAX DD:</b> ${state.max_drawdown:.0f}  ({state.drawdown_pct:.0f}%)\n"
-        f"<b>MODE:</b>  {mode_str}\n\n"
-        f"<b>=============================</b>\n"
-        f"<i>Auto-scan every 30 min | Window: {WINDOW_HOURS}h</i>"
+        f"\ud83d\udcb9 <b>\u0422\u0420\u0415\u0419\u0414\u0418\u041d\u0413 \u0422\u0415\u0420\u041c\u0418\u041d\u0410\u041b</b>\n"
+        f"\ud83d\udd52 {now.strftime('%d.%m.%Y %H:%M UTC')}\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+        f"\ud83d\udcb0 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b>  <code>${state.bankroll:.2f}</code>\n\n"
+        f"{pnl_all_icon} <b>P&amp;L \u0432\u0441\u0435\u0433\u043e:</b>  <code>{pnl_sign}${state.total_pnl:.2f}</code>\n"
+        f"{pnl_7d_icon} <b>P&amp;L 7\u0434:</b>    <code>{pnl_7d_sign}${pnl_7d:.2f}</code>  ({wins_7d}\u2705/{losses_7d}\u274c)\n"
+        f"{pnl_today_icon} <b>P&amp;L \u0441\u0435\u0433\u043e\u0434\u043d\u044f:</b> <code>{pnl_today_sign}${pnl_today:.2f}</code>  ({wins_today}\u2705/{losses_today}\u274c)\n\n"
+        f"\ud83d\udcbc <b>\u041e\u0442\u043a\u0440\u044b\u0442\u043e:</b>  {len(pending)} \u043f\u043e\u0437\u0438\u0446\u0438\u0439  (${pending_exposure:.2f})\n"
+        f"\ud83c\udfaf <b>\u0412\u0441\u0435\u0433\u043e \u0441\u0434\u0435\u043b\u043e\u043a:</b>  {state.signals_total}\n"
+        f"\ud83c\udfc6 <b>W/L:</b>   {state.signals_won}\u2705 / {state.signals_lost}\u274c\n"
+        f"\ud83d\udcca <b>\u0412\u0438\u043d\u0440\u0435\u0439\u0442:</b> <code>{state.win_rate:.0%}</code>\n"
+        f"\ud83d\udcc8 <b>ROI:</b>   <code>{state.roi:+.1f}%</code>\n"
+        f"{streak_icon} <b>\u0421\u0435\u0440\u0438\u044f:</b>  {state.current_streak}\n"
+        f"\ud83d\udcc9 <b>\u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0441\u0430\u0434\u043a\u0430:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
+        f"\ud83d\udee1\ufe0f <b>\u0420\u0435\u0436\u0438\u043c:</b>  {mode_str}\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        f"\ud83d\udd04 <i>\u0410\u0432\u0442\u043e\u0441\u043a\u0430\u043d \u043a\u0430\u0436\u0434\u044b\u0435 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d | \u041e\u043a\u043d\u043e: {WINDOW_HOURS}\u0447</i>"
     )
 
 
@@ -1273,17 +1294,19 @@ def build_positions_text(state: BotState) -> str:
     pending = [h for h in state.history if h.get("result") == "pending"]
     if not pending:
         return (
-            "<b>===== OPEN POSITIONS =====</b>\n\n"
-            "No open positions.\n\n"
-            "<i>Positions open automatically when scanner finds signals.</i>"
+            "\ud83d\udcbc <b>\u041e\u0422\u041a\u0420\u042b\u0422\u042b\u0415 \u041f\u041e\u0417\u0418\u0426\u0418\u0418</b>\n"
+            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+            "\ud83d\ude34 \u041d\u0435\u0442 \u043e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u0439\n\n"
+            "\ud83d\udd04 <i>\u041f\u043e\u0437\u0438\u0446\u0438\u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e\u0442\u0441\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043f\u0440\u0438 \u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0438</i>"
         )
 
     total_exposure = sum(h.get("bet_size", 0) for h in pending)
     total_potential = sum(h.get("potential_win", 0) for h in pending)
 
     lines = [
-        "<b>===== OPEN POSITIONS =====</b>",
-        f"  Open: {len(pending)}  |  Exposed: ${total_exposure:.2f}  |  Max win: +${total_potential:.2f}",
+        "\ud83d\udcbc <b>\u041e\u0422\u041a\u0420\u042b\u0422\u042b\u0415 \u041f\u041e\u0417\u0418\u0426\u0418\u0418</b>",
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        f"\ud83d\udcca \u041e\u0442\u043a\u0440\u044b\u0442\u043e: {len(pending)}  |  \u0420\u0438\u0441\u043a: ${total_exposure:.2f}  |  \u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0444\u0438\u0442: +${total_potential:.2f}",
         "",
     ]
 
@@ -1291,20 +1314,20 @@ def build_positions_text(state: BotState) -> str:
         sport_icon = _sport_icon(h.get("sport", ""))
         conf = h.get("confidence", 0)
         bar = _conf_bar(conf)
-        triple = " [3x]" if h.get("triple_confirmed") else ""
+        triple = " \ud83d\udd25\ud83d\udd25\ud83d\udd25" if h.get("triple_confirmed") else ""
         lines.append(
-            f"<b>#{i} [{sport_icon}] {_esc(h.get('pick_team', '?'))}</b>{triple}\n"
+            f"<b>#{i} {sport_icon} {_esc(h.get('pick_team', '?'))}</b>{triple}\n"
             f"    {_esc(h.get('home_team', '?'))} vs {_esc(h.get('away_team', '?'))}\n"
-            f"    {h.get('pick', '?')} | Conf: {bar}\n"
-            f"    Edge: {h.get('edge', 0):.1%} | Bet: ${h.get('bet_size', 0):.2f}\n"
-            f"    Win: +${h.get('potential_win', 0):.2f} | Lose: -${h.get('bet_size', 0):.2f}\n"
+            f"    \ud83c\udfaf {bar}\n"
+            f"    \ud83d\udcc0 \u042d\u0434\u0436: {h.get('edge', 0):.1%} | \ud83d\udcb5 \u0421\u0442\u0430\u0432\u043a\u0430: ${h.get('bet_size', 0):.2f}\n"
+            f"    \ud83d\udfe2 \u0412\u044b\u0438\u0433\u0440\u044b\u0448: +${h.get('potential_win', 0):.2f} | \ud83d\udd34 \u041f\u0440\u043e\u0438\u0433\u0440\u044b\u0448: -${h.get('bet_size', 0):.2f}\n"
         )
     return "\n".join(lines)
 
 
 def build_stats_text(state: BotState) -> str:
     now = datetime.now(timezone.utc)
-    periods = {"24h": 1, "7d": 7, "30d": 30, "ALL": 9999}
+    periods = {"24\u0447": 1, "7\u0434": 7, "30\u0434": 30, "\u0412\u0441\u0435\u0433\u043e": 9999}
     rows = []
     for label, days in periods.items():
         cutoff = now - timedelta(days=days)
@@ -1332,45 +1355,56 @@ def build_stats_text(state: BotState) -> str:
         total = w + l
         wr = w / total if total > 0 else 0
         roi = pnl / wagered * 100 if wagered > 0 else 0
+        pnl_icon = "\ud83d\udfe2" if pnl >= 0 else "\ud83d\udd34"
         pnl_sign = "+" if pnl >= 0 else ""
-        rows.append(f"  <b>{label:4s}</b>  {w}W/{l}L  WR:{wr:.0%}  P&amp;L:{pnl_sign}${pnl:.2f}  ROI:{roi:+.0f}%")
+        rows.append(f"  {pnl_icon} <b>{label:5s}</b> {w}\u2705/{l}\u274c  WR:{wr:.0%}  {pnl_sign}${pnl:.2f}  ROI:{roi:+.0f}%")
+
+    streak_icon = "\ud83d\udd25" if state.current_streak > 0 else ("\u2744\ufe0f" if state.current_streak < 0 else "\u2796")
 
     return (
-        "<b>======= STATISTICS =======</b>\n\n"
+        "\ud83d\udcc8 <b>\u0421\u0422\u0410\u0422\u0418\u0421\u0422\u0418\u041a\u0410</b>\n"
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
         + "\n".join(rows) + "\n\n"
-        f"<b>Bankroll:</b> ${state.bankroll:.2f}\n"
-        f"<b>Start:</b> $500.00\n"
-        f"<b>Max Drawdown:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
-        f"<b>Best streak:</b> {state.current_streak}\n"
-        f"<b>Current streak:</b> {state.current_streak}"
+        f"\ud83d\udcb0 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b> <code>${state.bankroll:.2f}</code>\n"
+        f"\ud83c\udfe6 <b>\u0421\u0442\u0430\u0440\u0442:</b> $500.00\n"
+        f"\ud83d\udcc9 <b>\u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0441\u0430\u0434\u043a\u0430:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
+        f"{streak_icon} <b>\u0422\u0435\u043a\u0443\u0449\u0430\u044f \u0441\u0435\u0440\u0438\u044f:</b> {state.current_streak}"
     )
 
 
 def build_history_text(state: BotState) -> str:
     recent = state.history[-15:]
     if not recent:
-        return "<b>===== TRADE HISTORY =====</b>\n\nNo trades yet."
+        return (
+            "\ud83d\udcdd <b>\u0418\u0421\u0422\u041e\u0420\u0418\u042f \u0421\u0414\u0415\u041b\u041e\u041a</b>\n"
+            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+            "\ud83d\ude34 \u0421\u0434\u0435\u043b\u043e\u043a \u043f\u043e\u043a\u0430 \u043d\u0435\u0442"
+        )
 
-    lines = ["<b>===== TRADE HISTORY =====</b>", ""]
+    lines = [
+        "\ud83d\udcdd <b>\u0418\u0421\u0422\u041e\u0420\u0418\u042f \u0421\u0414\u0415\u041b\u041e\u041a</b>",
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "",
+    ]
     for h in reversed(recent):
         result = h.get("result", "pending")
         if result == "won":
-            icon = "W"
+            icon = "\u2705"
             pnl = h.get("potential_win", 0)
-            pnl_str = f"+${pnl:.2f}"
+            pnl_str = f"\ud83d\udfe2 +${pnl:.2f}"
         elif result == "lost":
-            icon = "L"
+            icon = "\u274c"
             pnl = h.get("potential_loss", 0)
-            pnl_str = f"-${abs(pnl):.2f}"
+            pnl_str = f"\ud83d\udd34 -${abs(pnl):.2f}"
         else:
-            icon = "..."
-            pnl_str = "pending"
+            icon = "\u23f3"
+            pnl_str = "\u231b \u0436\u0434\u0451\u043c..."
 
         conf = h.get("confidence", 0)
         sport_icon = _sport_icon(h.get("sport", ""))
         ts_str = h.get("timestamp", "")[:16].replace("T", " ")
         lines.append(
-            f"[{icon}] [{sport_icon}] <b>{_esc(h.get('pick_team', '?'))}</b> "
+            f"{icon} {sport_icon} <b>{_esc(h.get('pick_team', '?'))}</b> "
             f"| {conf:.0%} | ${h.get('bet_size', 0):.2f} | {pnl_str}"
             f"\n    <i>{ts_str}</i>"
         )
@@ -1380,66 +1414,72 @@ def build_history_text(state: BotState) -> str:
 def build_events_text(all_analyses: list[GameAnalysis]) -> str:
     if not all_analyses:
         return (
-            "<b>===== EVENTS (next 6h) =====</b>\n\n"
-            "No events found. Next scan in 30 min."
+            "\ud83c\udfaf <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>\n"
+            "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+            "\ud83d\ude34 \u0421\u043e\u0431\u044b\u0442\u0438\u0439 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e\n\n"
+            "\ud83d\udd04 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 30 \u043c\u0438\u043d</i>"
         )
 
     bets = [a for a in all_analyses if a.verdict == "BET"]
     skips = [a for a in all_analyses if a.verdict != "BET"]
 
     lines = [
-        "<b>===== EVENTS (next 6h) =====</b>",
-        f"  Total: {len(all_analyses)}  |  Betting: {len(bets)}  |  Skip: {len(skips)}",
+        "\ud83c\udfaf <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>",
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        f"\ud83d\udcca \u0412\u0441\u0435\u0433\u043e: {len(all_analyses)}  |  \ud83d\udfe2 \u0421\u0442\u0430\u0432\u0438\u043c: {len(bets)}  |  \u26d4 \u041f\u0440\u043e\u043f\u0443\u0441\u043a: {len(skips)}",
         "",
     ]
 
     if bets:
-        lines.append("<b>--- WE BET ---</b>")
+        lines.append("\ud83d\udd25 <b>\u0421\u0422\u0410\u0412\u0418\u041c:</b>")
         for a in sorted(bets, key=lambda x: x.confidence, reverse=True):
             icon = _sport_icon(a.sport)
             bar = _conf_bar(a.confidence)
             lines.append(
-                f"\n[{icon}] <b>{_esc(a.verdict_team)}</b>  @{a.start_time}\n"
+                f"\n{icon} <b>\ud83d\udfe2 {_esc(a.verdict_team)}</b>  \ud83d\udd52 {a.start_time}\n"
                 f"    {_esc(a.home_team)} vs {_esc(a.away_team)}\n"
-                f"    Conf: {bar}\n"
-                f"    Edge: {a.edge:.1%} | Books: H={a.book_home_prob:.0%} A={a.book_away_prob:.0%}\n"
-                f"    Our:  H={a.our_home_prob:.0%} A={a.our_away_prob:.0%}"
+                f"    \ud83c\udfaf {bar}\n"
+                f"    \ud83d\udcc0 \u042d\u0434\u0436: {a.edge:.1%} | \ud83d\udcda \u0411\u0443\u043a\u0438: \u0414={a.book_home_prob:.0%} \u0413={a.book_away_prob:.0%}\n"
+                f"    \ud83e\udde0 \u041d\u0430\u0448\u0438: \u0414={a.our_home_prob:.0%} \u0413={a.our_away_prob:.0%}"
             )
             if a.home_form_str:
-                lines.append(f"    Home: {_esc(a.home_form_str)}")
+                lines.append(f"    \ud83c\udfe0 \u0414\u043e\u043c: {_esc(a.home_form_str)}")
             if a.away_form_str:
-                lines.append(f"    Away: {_esc(a.away_form_str)}")
+                lines.append(f"    \u2708\ufe0f \u0413\u043e\u0441\u0442\u0438: {_esc(a.away_form_str)}")
             if a.injury_note:
-                lines.append(f"    Injuries: {_esc(a.injury_note)}")
+                lines.append(f"    \ud83e\ude79 \u0422\u0440\u0430\u0432\u043c\u044b: {_esc(a.injury_note)}")
             if a.claude_note:
-                lines.append(f"    AI: {_esc(a.claude_note)}")
+                lines.append(f"    \ud83e\udd16 AI: {_esc(a.claude_note)}")
 
     if skips:
-        lines.append("\n<b>--- WE SKIP ---</b>")
+        lines.append(f"\n\u26d4 <b>\u041f\u0420\u041e\u041f\u0423\u0421\u041a\u0410\u0415\u041c:</b>")
         for a in skips:
             icon = _sport_icon(a.sport)
             lines.append(
-                f"\n[{icon}] {_esc(a.home_team)} vs {_esc(a.away_team)}  @{a.start_time}\n"
-                f"    Reason: {_esc(a.skip_reason)}\n"
-                f"    Books: H={a.book_home_prob:.0%} A={a.book_away_prob:.0%}"
+                f"\n{icon} {_esc(a.home_team)} vs {_esc(a.away_team)}  \ud83d\udd52 {a.start_time}\n"
+                f"    \u274c \u041f\u0440\u0438\u0447\u0438\u043d\u0430: {_esc(a.skip_reason)}\n"
+                f"    \ud83d\udcda \u0411\u0443\u043a\u0438: \u0414={a.book_home_prob:.0%} \u0413={a.book_away_prob:.0%}"
             )
 
     return "\n".join(lines)
 
 
 def build_settings_text(state: BotState) -> str:
+    mode_icon = "\u26a0\ufe0f" if state.is_cautious_mode() else "\u2705"
+    mode_name = "\u041e\u0421\u0422\u041e\u0420\u041e\u0416\u041d\u042b\u0419" if state.is_cautious_mode() else "\u041d\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u044b\u0439"
     return (
-        "<b>===== SETTINGS =====</b>\n\n"
-        f"<b>Bankroll:</b> ${state.bankroll:.2f}\n"
-        f"<b>Max bet:</b> {MAX_BET_PCT:.0%} of bankroll (${state.bankroll * MAX_BET_PCT:.2f})\n"
-        f"<b>Min confidence:</b> {MIN_CONFIDENCE:.0%}\n"
-        f"<b>Min edge:</b> {MIN_EDGE:.0%}\n"
-        f"<b>Kelly fraction:</b> {KELLY_FRACTION:.0%}\n"
-        f"<b>Scan window:</b> {WINDOW_HOURS}h\n"
-        f"<b>Auto-scan:</b> every {AUTOPILOT_INTERVAL // 60} min\n"
-        f"<b>Mode:</b> {'CAUTIOUS' if state.is_cautious_mode() else 'NORMAL'}\n"
-        f"<b>Paper trading:</b> YES\n\n"
-        "<i>Use buttons to adjust balance:</i>"
+        "\u2699\ufe0f <b>\u041d\u0410\u0421\u0422\u0420\u041e\u0419\u041a\u0418</b>\n"
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+        f"\ud83d\udcb0 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b> <code>${state.bankroll:.2f}</code>\n"
+        f"\ud83d\udcb5 <b>\u041c\u0430\u043a\u0441 \u0441\u0442\u0430\u0432\u043a\u0430:</b> {MAX_BET_PCT:.0%} \u043e\u0442 \u0431\u0430\u043b\u0430\u043d\u0441\u0430 (${state.bankroll * MAX_BET_PCT:.2f})\n"
+        f"\ud83c\udfaf <b>\u041c\u0438\u043d \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u044c:</b> {MIN_CONFIDENCE:.0%}\n"
+        f"\ud83d\udcc0 <b>\u041c\u0438\u043d \u044d\u0434\u0436:</b> {MIN_EDGE:.0%}\n"
+        f"\ud83d\udcca <b>Kelly:</b> {KELLY_FRACTION:.0%}\n"
+        f"\ud83d\udd52 <b>\u041e\u043a\u043d\u043e \u0441\u043a\u0430\u043d\u0430:</b> {WINDOW_HOURS}\u0447\n"
+        f"\ud83d\udd04 <b>\u0410\u0432\u0442\u043e\u0441\u043a\u0430\u043d:</b> \u043a\u0430\u0436\u0434\u044b\u0435 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d\n"
+        f"{mode_icon} <b>\u0420\u0435\u0436\u0438\u043c:</b> {mode_name}\n"
+        f"\ud83d\udcdd <b>\u0422\u0438\u043f:</b> Paper Trading (\u0431\u0435\u0437 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0445 \u0434\u0435\u043d\u0435\u0433)\n\n"
+        "\ud83d\udc47 <i>\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u0431\u0430\u043b\u0430\u043d\u0441:</i>"
     )
 
 
@@ -1454,10 +1494,11 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
 
     if n == 0:
         msg = (
-            f"<b>SCAN COMPLETE</b> | {now.strftime('%H:%M UTC')}\n"
-            f"Events scanned: {all_games_count}\n"
-            f"Signals: 0 — no profitable opportunities\n\n"
-            f"<i>Next scan in {AUTOPILOT_INTERVAL // 60} min</i>"
+            f"\ud83d\udd0d <b>\u0421\u041a\u0410\u041d \u0417\u0410\u0412\u0415\u0420\u0428\u0401\u041d</b> | {now.strftime('%H:%M UTC')}\n"
+            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+            f"\ud83d\udcca \u041f\u0440\u043e\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u043e: {all_games_count} \u0441\u043e\u0431\u044b\u0442\u0438\u0439\n"
+            f"\ud83d\ude34 \u0421\u0438\u0433\u043d\u0430\u043b\u043e\u0432: 0 \u2014 \u043d\u0435\u0442 \u0432\u044b\u0433\u043e\u0434\u043d\u044b\u0445 \u0441\u0442\u0430\u0432\u043e\u043a\n\n"
+            f"\ud83d\udd04 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d</i>"
         )
         await _tg_send(msg, _main_keyboard())
         return
@@ -1468,15 +1509,16 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
     triple_count = sum(1 for p in predictions if p.triple_confirmed)
 
     header = (
-        f"<b>NEW TRADES PLACED</b>\n"
-        f"  {now.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-        f"  Events: {all_games_count} | <b>Trades: {n}</b> | Triple: {triple_count}\n"
-        f"  Avg conf: {avg_conf:.0%} | Total EV: +${total_ev:.2f}\n"
-        f"  Wagered: ${total_bet:.2f} (Kelly sized)\n"
+        f"\ud83d\udea8 <b>\u041d\u041e\u0412\u042b\u0415 \u0421\u0422\u0410\u0412\u041a\u0418!</b>\n"
+        f"\ud83d\udd52 {now.strftime('%d.%m.%Y %H:%M UTC')}\n"
+        f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+        f"\ud83d\udcca \u0421\u043e\u0431\u044b\u0442\u0438\u0439: {all_games_count} | <b>\ud83d\udfe2 \u0421\u0442\u0430\u0432\u043e\u043a: {n}</b> | \ud83d\udd25 \u0422\u0440\u043e\u0439\u043d\u043e\u0439: {triple_count}\n"
+        f"\ud83c\udfaf \u0421\u0440. \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u044c: {avg_conf:.0%} | \ud83d\udcb0 EV: +${total_ev:.2f}\n"
+        f"\ud83d\udcb5 \u041f\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u043e: ${total_bet:.2f} (Kelly)\n"
     )
 
     if state.signals_won + state.signals_lost > 0:
-        header += f"  Record: {state.signals_won}W/{state.signals_lost}L ({state.win_rate:.0%})\n"
+        header += f"\ud83c\udfc6 \u0420\u0435\u043a\u043e\u0440\u0434: {state.signals_won}\u2705/{state.signals_lost}\u274c ({state.win_rate:.0%})\n"
 
     header += "\n"
 
@@ -1484,33 +1526,33 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
     for i, p in enumerate(sorted_preds, 1):
         icon = _sport_icon(p.sport)
         bar = _conf_bar(p.confidence)
-        triple_mark = " [3x CONFIRMED]" if p.triple_confirmed else ""
+        triple_mark = " \ud83d\udd25\ud83d\udd25\ud83d\udd25" if p.triple_confirmed else ""
 
         header += (
-            f"<b>#{i} [{icon}] {_esc(p.pick)} {_esc(p.pick_team)}</b>{triple_mark}\n"
-            f"    {_esc(p.home_team)} vs {_esc(p.away_team)} @{p.start_time}\n"
-            f"    {bar} | Edge: {p.edge:.1%}\n"
-            f"    Bet: <code>${p.bet_size:.2f}</code> | Win: +${p.potential_win:.2f}\n"
+            f"<b>#{i} {icon} {_esc(p.pick)} {_esc(p.pick_team)}</b>{triple_mark}\n"
+            f"    {_esc(p.home_team)} vs {_esc(p.away_team)} \ud83d\udd52 {p.start_time}\n"
+            f"    \ud83c\udfaf {bar} | \ud83d\udcc0 \u042d\u0434\u0436: {p.edge:.1%}\n"
+            f"    \ud83d\udcb5 \u0421\u0442\u0430\u0432\u043a\u0430: <code>${p.bet_size:.2f}</code> | \ud83d\udfe2 \u0412\u044b\u0438\u0433\u0440\u044b\u0448: +${p.potential_win:.2f}\n"
         )
 
         extras = []
         if p.home_form:
-            extras.append(f"H: {p.home_form.get('record','-')} L10:{p.home_form.get('l10','-')}")
+            extras.append(f"\ud83c\udfe0 {p.home_form.get('record','-')} L10:{p.home_form.get('l10','-')}")
         if p.away_form:
-            extras.append(f"A: {p.away_form.get('record','-')} L10:{p.away_form.get('l10','-')}")
+            extras.append(f"\u2708\ufe0f {p.away_form.get('record','-')} L10:{p.away_form.get('l10','-')}")
         if p.injury_impact_home > 0:
-            extras.append(f"Inj(H):-{p.injury_impact_home:.0%}")
+            extras.append(f"\ud83e\ude79\u0414:-{p.injury_impact_home:.0%}")
         if p.injury_impact_away > 0:
-            extras.append(f"Inj(A):-{p.injury_impact_away:.0%}")
+            extras.append(f"\ud83e\ude79\u0413:-{p.injury_impact_away:.0%}")
         if p.claude_pick:
-            extras.append(f"AI:{p.claude_pick}({p.claude_confidence:.0%})")
+            extras.append(f"\ud83e\udd16 AI:{p.claude_pick}({p.claude_confidence:.0%})")
         if p.contrarian_signal:
-            extras.append(f"Contrarian:{_esc(p.contrarian_signal)}")
+            extras.append(f"\ud83d\udd04 {_esc(p.contrarian_signal)}")
         if extras:
             header += f"    <i>{' | '.join(extras)}</i>\n"
         header += "\n"
 
-    header += f"<i>Balance: ${state.bankroll:.2f} | Next scan in {AUTOPILOT_INTERVAL // 60} min</i>"
+    header += f"\ud83d\udcb0 <i>\u0411\u0430\u043b\u0430\u043d\u0441: ${state.bankroll:.2f} | \u0421\u043b\u0435\u0434. \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d</i>"
 
     if len(header) > 4000:
         header = header[:4000] + "\n..."
@@ -1927,13 +1969,13 @@ async def run_telegram_bot():
 
                         elif cb_data == "scan":
                             if msg_id:
-                                await _tg_edit(msg_id, "<b>SCANNING...</b>\n\nAnalyzing all events for next 6 hours.\nThis takes 30-60 seconds...", _back_keyboard())
+                                await _tg_edit(msg_id, f"🔍 <b>СКАНИРУЮ...</b>\n\n📊 Анализирую все события на {WINDOW_HOURS}ч вперёд.\n⏳ Это займёт 30-60 секунд...", _back_keyboard())
                             try:
                                 _, analyses = await run_predictor(use_claude=True, use_scrapers=True)
                                 _last_analyses = analyses
                             except Exception as e:
                                 logger.error(f"Scan failed: {e}")
-                                await _tg_send(f"Scan failed: {_esc(str(e)[:200])}", _main_keyboard())
+                                await _tg_send(f"❌ <b>Ошибка скана:</b> {_esc(str(e)[:200])}", _main_keyboard())
 
                         elif cb_data.startswith("bal_"):
                             if cb_data == "bal_add_100":
@@ -1964,13 +2006,13 @@ async def run_telegram_bot():
                         await _tg_send(dash, _main_keyboard())
 
                     elif text == "/scan":
-                        await _tg_send("<b>SCANNING...</b>\nAnalyzing events for next 6 hours...")
+                        await _tg_send(f"🔍 <b>СКАНИРУЮ...</b>\n📊 Анализирую события на {WINDOW_HOURS}ч вперёд...")
                         try:
                             _, analyses = await run_predictor(use_claude=True, use_scrapers=True)
                             _last_analyses = analyses
                         except Exception as e:
                             logger.error(f"Scan failed: {e}")
-                            await _tg_send(f"Scan error: {_esc(str(e)[:200])}", _main_keyboard())
+                            await _tg_send(f"❌ <b>Ошибка скана:</b> {_esc(str(e)[:200])}", _main_keyboard())
 
                     elif text.startswith("/won ") or text.startswith("/lost "):
                         parts = text.split(maxsplit=1)
@@ -1985,11 +2027,16 @@ async def run_telegram_bot():
                             if game_hint.lower() in entry.get("pick_team", "").lower() or game_hint.lower() in entry.get("game_id", "").lower():
                                 state.record_result(entry["game_id"], won)
                                 pnl_val = entry["potential_win"] if won else entry["potential_loss"]
-                                icon = "W" if won else "L"
+                                if won:
+                                    icon = "✅"
+                                    pnl_str = f"🟢 +${pnl_val:.2f}"
+                                else:
+                                    icon = "❌"
+                                    pnl_str = f"🔴 -${abs(pnl_val):.2f}"
                                 await _tg_send(
-                                    f"<b>[{icon}] {_esc(entry['pick_team'])}</b>\n"
-                                    f"P&amp;L: ${pnl_val:+.2f}\n"
-                                    f"Balance: <code>${state.bankroll:.2f}</code>",
+                                    f"{icon} <b>{_esc(entry['pick_team'])}</b>\n"
+                                    f"💰 P&amp;L: {pnl_str}\n"
+                                    f"💳 Баланс: <code>${state.bankroll:.2f}</code>",
                                     _main_keyboard()
                                 )
                                 found = True
@@ -1998,13 +2045,13 @@ async def run_telegram_bot():
                         if not found:
                             pending = [h for h in state.history if h.get("result") == "pending"]
                             if pending:
-                                msg = "<b>Game not found.</b> Pending:\n"
+                                msg = "❓ <b>Игра не найдена.</b> Открытые:\n"
                                 for h in pending:
                                     team = _esc(h.get("pick_team", "?"))
-                                    msg += f"  {team} — <code>/won {h.get('pick_team', '').split()[-1]}</code>\n"
+                                    msg += f"  • {team} — <code>/won {h.get('pick_team', '').split()[-1]}</code>\n"
                                 await _tg_send(msg)
                             else:
-                                await _tg_send("No pending games.")
+                                await _tg_send("💭 Нет открытых позиций.")
 
         except Exception as e:
             logger.error(f"Bot error: {e}")
