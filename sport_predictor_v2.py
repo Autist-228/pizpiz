@@ -32,7 +32,7 @@ import os
 import sys
 import time as _time
 from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
 import aiohttp
@@ -54,11 +54,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 BANKROLL = 500.0
-BASE_BET = 10.0
-MIN_CONFIDENCE = 0.55
-MIN_EDGE = 0.03
-MAX_BET_PCT = 0.05
-WINDOW_HOURS = 24
+BASE_BET = 5.0
+MIN_CONFIDENCE = 0.52
+MIN_EDGE = 0.02
+MAX_BET_PCT = 0.08
+WINDOW_HOURS = 6
+AUTOPILOT_INTERVAL = 1800
 KELLY_FRACTION = 0.25
 
 SHARP_BOOKMAKERS = {"pinnacle", "betfair", "matchbook", "smarkets", "betfair_ex_eu"}
@@ -137,6 +138,29 @@ class TeamForm:
             return max((today - last).days - 1, 0)
         except Exception:
             return 3
+
+
+@dataclass
+class GameAnalysis:
+    home_team: str
+    away_team: str
+    sport: str
+    start_time: str
+    our_home_prob: float = 0.5
+    our_away_prob: float = 0.5
+    book_home_prob: float = 0.5
+    book_away_prob: float = 0.5
+    n_bookmakers: int = 0
+    has_sharp: bool = False
+    verdict: str = "SKIP"
+    verdict_team: str = ""
+    confidence: float = 0.0
+    edge: float = 0.0
+    skip_reason: str = ""
+    home_form_str: str = ""
+    away_form_str: str = ""
+    injury_note: str = ""
+    claude_note: str = ""
 
 
 @dataclass
@@ -259,6 +283,8 @@ class BotState:
             "potential_win": pred.potential_win,
             "potential_loss": pred.potential_loss,
             "ev": pred.expected_value,
+            "sport": pred.sport,
+            "triple_confirmed": pred.triple_confirmed,
             "result": "pending",
         }
         self.history.append(entry)
@@ -872,7 +898,7 @@ def generate_signal(
         return None
     if edge < MIN_EDGE:
         return None
-    if n_bookmakers < 5:
+    if n_bookmakers < 3:
         return None
 
     claude_pick = ""
@@ -1091,116 +1117,427 @@ def format_report(predictions: list[GamePrediction], all_games_count: int, state
     return "\n".join(lines)
 
 
-async def send_telegram(predictions: list[GamePrediction], all_games_count: int, state: BotState):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.info("Telegram not configured")
-        return
+def _conf_bar(conf: float) -> str:
+    filled = round(conf * 10)
+    return "[" + "=" * filled + " " * (10 - filled) + f"] {conf:.0%}"
 
+
+def _sport_icon(sport: str) -> str:
+    if "basketball" in sport or "nba" in sport:
+        return "B"
+    if "soccer" in sport or "epl" in sport or "liga" in sport or "serie" in sport or "bundesliga" in sport or "ligue" in sport or "champs" in sport:
+        return "S"
+    return "?"
+
+
+async def _tg_send(text: str, reply_markup: dict | None = None, chat_id: str = ""):
+    if not TELEGRAM_TOKEN:
+        return None
+    cid = chat_id or TELEGRAM_CHAT_ID
+    if not cid:
+        return None
     try:
         import httpx
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-        now = datetime.now(timezone.utc)
-        n = len(predictions)
-
-        if n == 0:
-            msg = f"PREDICTOR V2 | {now.strftime('%H:%M UTC')}\nGames: {all_games_count} | Signals: 0\nNo confident picks."
-        else:
-            avg_conf = np.mean([p.confidence for p in predictions])
-            total_ev = sum(p.expected_value for p in predictions)
-            total_bet = sum(p.bet_size for p in predictions)
-            triple_count = sum(1 for p in predictions if p.triple_confirmed)
-
-            msg = (
-                f"PREDICTOR V2 — {n} SIGNALS\n"
-                f"{'='*30}\n"
-                f"{now.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                f"Games: {all_games_count} | Triple: {triple_count}/{n}\n"
-                f"Avg conf: {avg_conf:.0%} | EV: ${total_ev:+.1f}\n"
-                f"Total bet: ${total_bet:.2f} (Kelly)\n"
-            )
-
-            if state.signals_won + state.signals_lost > 0:
-                msg += f"Record: {state.signals_won}W/{state.signals_lost}L ({state.win_rate:.0%})\n"
-
-            msg += f"{'='*30}\n\n"
-
-            sorted_preds = sorted(predictions, key=lambda p: p.confidence, reverse=True)
-            for i, p in enumerate(sorted_preds, 1):
-                star = "***" if p.confidence >= 0.70 else "**" if p.confidence >= 0.60 else "*"
-                triple = " [3x]" if p.triple_confirmed else ""
-                msg += (
-                    f"#{i} {star} {p.pick} {p.pick_team}{triple}\n"
-                    f"  {p.home_team} vs {p.away_team}\n"
-                    f"  Conf:{p.confidence:.0%} Edge:{p.edge:.1%} EV:${p.expected_value:+.1f}\n"
-                    f"  Bet: ${p.bet_size:.2f} (Kelly)\n"
-                )
-                if p.home_form:
-                    msg += f"  {p.home_team}: {p.home_form.get('record','-')} L10:{p.home_form.get('l10','-')}\n"
-                if p.away_form:
-                    msg += f"  {p.away_team}: {p.away_form.get('record','-')} L10:{p.away_form.get('l10','-')}\n"
-
-                extras = []
-                if p.injury_impact_home > 0:
-                    extras.append(f"Inj(H):-{p.injury_impact_home:.0%}")
-                if p.injury_impact_away > 0:
-                    extras.append(f"Inj(A):-{p.injury_impact_away:.0%}")
-                if p.contrarian_signal:
-                    extras.append(f"Contr:{p.contrarian_signal}")
-                if p.claude_pick:
-                    extras.append(f"AI:{p.claude_pick}")
-                if extras:
-                    msg += f"  [{' | '.join(extras)}]\n"
-                msg += "\n"
-
-        if len(msg) > 4000:
-            msg = msg[:4000] + "\n..."
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": msg,
-                "parse_mode": "",
-            })
+        payload: dict = {"chat_id": cid, "text": text, "parse_mode": "HTML"}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(url, json=payload)
             if resp.status_code == 200:
-                logger.info("Telegram report sent!")
-            else:
-                logger.error(f"Telegram failed: {resp.status_code} {resp.text}")
-
+                return resp.json().get("result", {}).get("message_id")
+            logger.error(f"TG send failed: {resp.status_code} {resp.text[:200]}")
     except Exception as e:
-        logger.error(f"Telegram failed: {e}")
+        logger.error(f"TG send error: {e}")
+    return None
 
 
-async def send_telegram_message(text: str):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+async def _tg_edit(message_id: int, text: str, reply_markup: dict | None = None, chat_id: str = ""):
+    if not TELEGRAM_TOKEN:
+        return
+    cid = chat_id or TELEGRAM_CHAT_ID
+    if not cid:
         return
     try:
         import httpx
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        async with httpx.AsyncClient() as client:
-            await client.post(url, json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": text,
-            })
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
+        payload: dict = {"chat_id": cid, "message_id": message_id, "text": text, "parse_mode": "HTML"}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.post(url, json=payload)
     except Exception:
         pass
 
 
-async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
+async def _tg_answer_cb(callback_query_id: str):
+    if not TELEGRAM_TOKEN:
+        return
+    try:
+        import httpx
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery"
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, json={"callback_query_id": callback_query_id})
+    except Exception:
+        pass
+
+
+def _main_keyboard() -> dict:
+    return {"inline_keyboard": [
+        [{"text": "-- DASHBOARD --", "callback_data": "dash"}],
+        [{"text": "-- OPEN POSITIONS --", "callback_data": "positions"}, {"text": "-- EVENTS 6H --", "callback_data": "events"}],
+        [{"text": "-- STATS --", "callback_data": "stats"}, {"text": "-- HISTORY --", "callback_data": "history"}],
+        [{"text": "-- SCAN NOW --", "callback_data": "scan"}, {"text": "-- SETTINGS --", "callback_data": "settings"}],
+    ]}
+
+
+def _back_keyboard() -> dict:
+    return {"inline_keyboard": [[{"text": "<< BACK", "callback_data": "dash"}]]}
+
+
+def _settings_keyboard(state: BotState) -> dict:
+    return {"inline_keyboard": [
+        [{"text": "Balance +100", "callback_data": "bal_add_100"}, {"text": "Balance -100", "callback_data": "bal_sub_100"}],
+        [{"text": "Balance +500", "callback_data": "bal_add_500"}, {"text": "Reset to $500", "callback_data": "bal_reset"}],
+        [{"text": "<< BACK", "callback_data": "dash"}],
+    ]}
+
+
+def _esc(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_dashboard_text(state: BotState) -> str:
+    now = datetime.now(timezone.utc)
+    pnl_today = 0.0
+    pnl_7d = 0.0
+    wins_today = 0
+    losses_today = 0
+    wins_7d = 0
+    losses_7d = 0
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=7)
+
+    for h in state.history:
+        ts_str = h.get("timestamp", "")
+        try:
+            ts = datetime.fromisoformat(ts_str)
+        except Exception:
+            continue
+        result = h.get("result", "pending")
+        if result == "pending":
+            continue
+        pnl_val = h.get("potential_win", 0) if result == "won" else h.get("potential_loss", 0)
+        if ts >= today_start:
+            pnl_today += pnl_val
+            if result == "won":
+                wins_today += 1
+            else:
+                losses_today += 1
+        if ts >= week_start:
+            pnl_7d += pnl_val
+            if result == "won":
+                wins_7d += 1
+            else:
+                losses_7d += 1
+
+    pending = [h for h in state.history if h.get("result") == "pending"]
+    pending_exposure = sum(h.get("bet_size", 0) for h in pending)
+
+    mode_str = "!! CAUTIOUS (DD &gt;20%)" if state.is_cautious_mode() else "NORMAL"
+    pnl_sign = "+" if state.total_pnl >= 0 else ""
+    pnl_today_sign = "+" if pnl_today >= 0 else ""
+    pnl_7d_sign = "+" if pnl_7d >= 0 else ""
+
+    return (
+        f"<b>======= TRADING TERMINAL =======</b>\n"
+        f"  {now.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+        f"<b>BALANCE:</b>  <code>${state.bankroll:.2f}</code>\n"
+        f"<b>P&amp;L ALL:</b>  <code>{pnl_sign}${state.total_pnl:.2f}</code>\n"
+        f"<b>P&amp;L 7D:</b>   <code>{pnl_7d_sign}${pnl_7d:.2f}</code>  ({wins_7d}W/{losses_7d}L)\n"
+        f"<b>P&amp;L TODAY:</b> <code>{pnl_today_sign}${pnl_today:.2f}</code>  ({wins_today}W/{losses_today}L)\n\n"
+        f"<b>OPEN:</b>  {len(pending)} positions  (${pending_exposure:.2f} exposed)\n"
+        f"<b>TOTAL:</b> {state.signals_total} trades\n"
+        f"<b>W/L:</b>   {state.signals_won}W / {state.signals_lost}L\n"
+        f"<b>WINRATE:</b> <code>{state.win_rate:.0%}</code>\n"
+        f"<b>ROI:</b>   <code>{state.roi:+.1f}%</code>\n"
+        f"<b>STREAK:</b> {state.current_streak}\n"
+        f"<b>MAX DD:</b> ${state.max_drawdown:.0f}  ({state.drawdown_pct:.0f}%)\n"
+        f"<b>MODE:</b>  {mode_str}\n\n"
+        f"<b>=============================</b>\n"
+        f"<i>Auto-scan every 30 min | Window: {WINDOW_HOURS}h</i>"
+    )
+
+
+def build_positions_text(state: BotState) -> str:
+    pending = [h for h in state.history if h.get("result") == "pending"]
+    if not pending:
+        return (
+            "<b>===== OPEN POSITIONS =====</b>\n\n"
+            "No open positions.\n\n"
+            "<i>Positions open automatically when scanner finds signals.</i>"
+        )
+
+    total_exposure = sum(h.get("bet_size", 0) for h in pending)
+    total_potential = sum(h.get("potential_win", 0) for h in pending)
+
+    lines = [
+        "<b>===== OPEN POSITIONS =====</b>",
+        f"  Open: {len(pending)}  |  Exposed: ${total_exposure:.2f}  |  Max win: +${total_potential:.2f}",
+        "",
+    ]
+
+    for i, h in enumerate(reversed(pending), 1):
+        sport_icon = _sport_icon(h.get("sport", ""))
+        conf = h.get("confidence", 0)
+        bar = _conf_bar(conf)
+        triple = " [3x]" if h.get("triple_confirmed") else ""
+        lines.append(
+            f"<b>#{i} [{sport_icon}] {_esc(h.get('pick_team', '?'))}</b>{triple}\n"
+            f"    {_esc(h.get('home_team', '?'))} vs {_esc(h.get('away_team', '?'))}\n"
+            f"    {h.get('pick', '?')} | Conf: {bar}\n"
+            f"    Edge: {h.get('edge', 0):.1%} | Bet: ${h.get('bet_size', 0):.2f}\n"
+            f"    Win: +${h.get('potential_win', 0):.2f} | Lose: -${h.get('bet_size', 0):.2f}\n"
+        )
+    return "\n".join(lines)
+
+
+def build_stats_text(state: BotState) -> str:
+    now = datetime.now(timezone.utc)
+    periods = {"24h": 1, "7d": 7, "30d": 30, "ALL": 9999}
+    rows = []
+    for label, days in periods.items():
+        cutoff = now - timedelta(days=days)
+        w = l = 0
+        pnl = 0.0
+        wagered = 0.0
+        for h in state.history:
+            ts_str = h.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts_str)
+            except Exception:
+                continue
+            if ts < cutoff:
+                continue
+            result = h.get("result", "pending")
+            if result == "pending":
+                continue
+            wagered += h.get("bet_size", 0)
+            if result == "won":
+                w += 1
+                pnl += h.get("potential_win", 0)
+            else:
+                l += 1
+                pnl += h.get("potential_loss", 0)
+        total = w + l
+        wr = w / total if total > 0 else 0
+        roi = pnl / wagered * 100 if wagered > 0 else 0
+        pnl_sign = "+" if pnl >= 0 else ""
+        rows.append(f"  <b>{label:4s}</b>  {w}W/{l}L  WR:{wr:.0%}  P&amp;L:{pnl_sign}${pnl:.2f}  ROI:{roi:+.0f}%")
+
+    return (
+        "<b>======= STATISTICS =======</b>\n\n"
+        + "\n".join(rows) + "\n\n"
+        f"<b>Bankroll:</b> ${state.bankroll:.2f}\n"
+        f"<b>Start:</b> $500.00\n"
+        f"<b>Max Drawdown:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
+        f"<b>Best streak:</b> {state.current_streak}\n"
+        f"<b>Current streak:</b> {state.current_streak}"
+    )
+
+
+def build_history_text(state: BotState) -> str:
+    recent = state.history[-15:]
+    if not recent:
+        return "<b>===== TRADE HISTORY =====</b>\n\nNo trades yet."
+
+    lines = ["<b>===== TRADE HISTORY =====</b>", ""]
+    for h in reversed(recent):
+        result = h.get("result", "pending")
+        if result == "won":
+            icon = "W"
+            pnl = h.get("potential_win", 0)
+            pnl_str = f"+${pnl:.2f}"
+        elif result == "lost":
+            icon = "L"
+            pnl = h.get("potential_loss", 0)
+            pnl_str = f"-${abs(pnl):.2f}"
+        else:
+            icon = "..."
+            pnl_str = "pending"
+
+        conf = h.get("confidence", 0)
+        sport_icon = _sport_icon(h.get("sport", ""))
+        ts_str = h.get("timestamp", "")[:16].replace("T", " ")
+        lines.append(
+            f"[{icon}] [{sport_icon}] <b>{_esc(h.get('pick_team', '?'))}</b> "
+            f"| {conf:.0%} | ${h.get('bet_size', 0):.2f} | {pnl_str}"
+            f"\n    <i>{ts_str}</i>"
+        )
+    return "\n".join(lines)
+
+
+def build_events_text(all_analyses: list[GameAnalysis]) -> str:
+    if not all_analyses:
+        return (
+            "<b>===== EVENTS (next 6h) =====</b>\n\n"
+            "No events found. Next scan in 30 min."
+        )
+
+    bets = [a for a in all_analyses if a.verdict == "BET"]
+    skips = [a for a in all_analyses if a.verdict != "BET"]
+
+    lines = [
+        "<b>===== EVENTS (next 6h) =====</b>",
+        f"  Total: {len(all_analyses)}  |  Betting: {len(bets)}  |  Skip: {len(skips)}",
+        "",
+    ]
+
+    if bets:
+        lines.append("<b>--- WE BET ---</b>")
+        for a in sorted(bets, key=lambda x: x.confidence, reverse=True):
+            icon = _sport_icon(a.sport)
+            bar = _conf_bar(a.confidence)
+            lines.append(
+                f"\n[{icon}] <b>{_esc(a.verdict_team)}</b>  @{a.start_time}\n"
+                f"    {_esc(a.home_team)} vs {_esc(a.away_team)}\n"
+                f"    Conf: {bar}\n"
+                f"    Edge: {a.edge:.1%} | Books: H={a.book_home_prob:.0%} A={a.book_away_prob:.0%}\n"
+                f"    Our:  H={a.our_home_prob:.0%} A={a.our_away_prob:.0%}"
+            )
+            if a.home_form_str:
+                lines.append(f"    Home: {_esc(a.home_form_str)}")
+            if a.away_form_str:
+                lines.append(f"    Away: {_esc(a.away_form_str)}")
+            if a.injury_note:
+                lines.append(f"    Injuries: {_esc(a.injury_note)}")
+            if a.claude_note:
+                lines.append(f"    AI: {_esc(a.claude_note)}")
+
+    if skips:
+        lines.append("\n<b>--- WE SKIP ---</b>")
+        for a in skips:
+            icon = _sport_icon(a.sport)
+            lines.append(
+                f"\n[{icon}] {_esc(a.home_team)} vs {_esc(a.away_team)}  @{a.start_time}\n"
+                f"    Reason: {_esc(a.skip_reason)}\n"
+                f"    Books: H={a.book_home_prob:.0%} A={a.book_away_prob:.0%}"
+            )
+
+    return "\n".join(lines)
+
+
+def build_settings_text(state: BotState) -> str:
+    return (
+        "<b>===== SETTINGS =====</b>\n\n"
+        f"<b>Bankroll:</b> ${state.bankroll:.2f}\n"
+        f"<b>Max bet:</b> {MAX_BET_PCT:.0%} of bankroll (${state.bankroll * MAX_BET_PCT:.2f})\n"
+        f"<b>Min confidence:</b> {MIN_CONFIDENCE:.0%}\n"
+        f"<b>Min edge:</b> {MIN_EDGE:.0%}\n"
+        f"<b>Kelly fraction:</b> {KELLY_FRACTION:.0%}\n"
+        f"<b>Scan window:</b> {WINDOW_HOURS}h\n"
+        f"<b>Auto-scan:</b> every {AUTOPILOT_INTERVAL // 60} min\n"
+        f"<b>Mode:</b> {'CAUTIOUS' if state.is_cautious_mode() else 'NORMAL'}\n"
+        f"<b>Paper trading:</b> YES\n\n"
+        "<i>Use buttons to adjust balance:</i>"
+    )
+
+
+async def send_telegram(predictions: list[GamePrediction], all_analyses: list[GameAnalysis],
+                        all_games_count: int, state: BotState):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.info("Telegram not configured")
+        return
+
+    now = datetime.now(timezone.utc)
+    n = len(predictions)
+
+    if n == 0:
+        msg = (
+            f"<b>SCAN COMPLETE</b> | {now.strftime('%H:%M UTC')}\n"
+            f"Events scanned: {all_games_count}\n"
+            f"Signals: 0 — no profitable opportunities\n\n"
+            f"<i>Next scan in {AUTOPILOT_INTERVAL // 60} min</i>"
+        )
+        await _tg_send(msg, _main_keyboard())
+        return
+
+    avg_conf = np.mean([p.confidence for p in predictions])
+    total_ev = sum(p.expected_value for p in predictions)
+    total_bet = sum(p.bet_size for p in predictions)
+    triple_count = sum(1 for p in predictions if p.triple_confirmed)
+
+    header = (
+        f"<b>NEW TRADES PLACED</b>\n"
+        f"  {now.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+        f"  Events: {all_games_count} | <b>Trades: {n}</b> | Triple: {triple_count}\n"
+        f"  Avg conf: {avg_conf:.0%} | Total EV: +${total_ev:.2f}\n"
+        f"  Wagered: ${total_bet:.2f} (Kelly sized)\n"
+    )
+
+    if state.signals_won + state.signals_lost > 0:
+        header += f"  Record: {state.signals_won}W/{state.signals_lost}L ({state.win_rate:.0%})\n"
+
+    header += "\n"
+
+    sorted_preds = sorted(predictions, key=lambda p: p.confidence, reverse=True)
+    for i, p in enumerate(sorted_preds, 1):
+        icon = _sport_icon(p.sport)
+        bar = _conf_bar(p.confidence)
+        triple_mark = " [3x CONFIRMED]" if p.triple_confirmed else ""
+
+        header += (
+            f"<b>#{i} [{icon}] {_esc(p.pick)} {_esc(p.pick_team)}</b>{triple_mark}\n"
+            f"    {_esc(p.home_team)} vs {_esc(p.away_team)} @{p.start_time}\n"
+            f"    {bar} | Edge: {p.edge:.1%}\n"
+            f"    Bet: <code>${p.bet_size:.2f}</code> | Win: +${p.potential_win:.2f}\n"
+        )
+
+        extras = []
+        if p.home_form:
+            extras.append(f"H: {p.home_form.get('record','-')} L10:{p.home_form.get('l10','-')}")
+        if p.away_form:
+            extras.append(f"A: {p.away_form.get('record','-')} L10:{p.away_form.get('l10','-')}")
+        if p.injury_impact_home > 0:
+            extras.append(f"Inj(H):-{p.injury_impact_home:.0%}")
+        if p.injury_impact_away > 0:
+            extras.append(f"Inj(A):-{p.injury_impact_away:.0%}")
+        if p.claude_pick:
+            extras.append(f"AI:{p.claude_pick}({p.claude_confidence:.0%})")
+        if p.contrarian_signal:
+            extras.append(f"Contrarian:{_esc(p.contrarian_signal)}")
+        if extras:
+            header += f"    <i>{' | '.join(extras)}</i>\n"
+        header += "\n"
+
+    header += f"<i>Balance: ${state.bankroll:.2f} | Next scan in {AUTOPILOT_INTERVAL // 60} min</i>"
+
+    if len(header) > 4000:
+        header = header[:4000] + "\n..."
+
+    await _tg_send(header, _main_keyboard())
+
+
+async def send_telegram_message(text: str):
+    await _tg_send(text)
+
+
+async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> tuple[list[GamePrediction], list[GameAnalysis]]:
     now = datetime.now(timezone.utc)
     state = BotState()
 
     logger.info("=" * 55)
-    logger.info("SPORT PREDICTOR V2 — FULL POWER")
+    logger.info("SPORT PREDICTOR V2 — FULL AUTO TRADER")
     logger.info(f"Time: {now.strftime('%Y-%m-%d %H:%M UTC')}")
     logger.info(f"Bankroll: ${state.bankroll:.0f} | Mode: {'CAUTIOUS' if state.is_cautious_mode() else 'NORMAL'}")
     logger.info(f"Window: {WINDOW_HOURS}h | Min conf: {MIN_CONFIDENCE:.0%} | Min edge: {MIN_EDGE:.0%}")
     logger.info("=" * 55)
 
+    all_analyses: list[GameAnalysis] = []
     injuries = {}
     public_data = []
     if use_scrapers:
-        logger.info("Step 0: Scraping ESPN injuries + Covers public betting...")
+        logger.info("Step 0: Scraping ESPN injuries + public betting...")
         try:
             injuries = scrape_injuries_safe()
             total_inj = sum(len(v) for v in injuries.values())
@@ -1210,28 +1547,24 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
 
         try:
             public_data = scrape_public_betting_safe()
-            logger.info(f"  Covers: {len(public_data)} games with public data")
+            logger.info(f"  Public betting: {len(public_data)} games")
         except Exception as e:
-            logger.warning(f"  Covers scraper failed: {e}")
+            logger.warning(f"  Public betting scraper failed: {e}")
 
     async with aiohttp.ClientSession() as session:
-        logger.info("Step 1: Fetching recent NBA games for form data...")
+        logger.info("Step 1: Fetching NBA team form (45 days)...")
         recent_games = await fetch_nba_recent_games(session, days_back=45)
         team_forms = build_team_forms(recent_games)
-        logger.info(f"  Built form for {len(team_forms)} teams")
-        for name, tf in sorted(team_forms.items(), key=lambda x: x[1].win_rate, reverse=True)[:10]:
-            logger.info(f"  {name}: {tf.wins}W-{tf.losses}L ({tf.win_rate:.0%}) | L10:{tf.last10_wins}-{tf.last10_losses} | PPG:{tf.ppg:.1f} | Net:{tf.net_rating:+.1f}")
+        logger.info(f"  Form data for {len(team_forms)} teams")
 
         logger.info("Step 2: Fetching today's NBA games...")
         todays_games = await fetch_todays_nba_games(session)
-        for g in todays_games:
-            dt = g.get("_parsed_dt", "?")
-            logger.info(f"  {g['home_team']['full_name']} vs {g['visitor_team']['full_name']} @ {dt}")
+        logger.info(f"  Found {len(todays_games)} NBA games")
 
-        logger.info("Step 3: Fetching bookmaker odds...")
+        logger.info("Step 3: Fetching bookmaker odds (44 bookmakers)...")
         odds_data = await fetch_odds_api(session)
 
-        logger.info("Step 4: Generating predictions (model + scrapers + AI)...")
+        logger.info("Step 4: Analyzing ALL events...")
         all_predictions = []
         total_analyzed = 0
         claude_calls = 0
@@ -1242,17 +1575,38 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
             dt = game.get("_parsed_dt")
             start_str = dt.strftime("%H:%M UTC") if dt else "?"
 
+            analysis = GameAnalysis(home_team=ht, away_team=vt, sport="basketball_nba", start_time=start_str)
+
             odds = match_odds_to_game(game, odds_data)
             if not odds:
-                logger.warning(f"  No odds for {ht} vs {vt}, skipping")
+                analysis.skip_reason = "No bookmaker odds available"
+                all_analyses.append(analysis)
                 continue
 
             total_analyzed += 1
+            analysis.book_home_prob = odds["home_prob"]
+            analysis.book_away_prob = odds["away_prob"]
+            analysis.n_bookmakers = odds["n_bookmakers"]
+            analysis.has_sharp = odds["has_sharp"]
+
             home_form = team_forms.get(ht)
             away_form = team_forms.get(vt)
 
+            if home_form and home_form.games > 0:
+                analysis.home_form_str = f"{home_form.wins}W-{home_form.losses}L L10:{home_form.last10_wins}-{home_form.last10_losses} PPG:{home_form.ppg:.1f}"
+            if away_form and away_form.games > 0:
+                analysis.away_form_str = f"{away_form.wins}W-{away_form.losses}L L10:{away_form.last10_wins}-{away_form.last10_losses} PPG:{away_form.ppg:.1f}"
+
             inj_home = get_injury_impact(injuries, ht) if injuries else 0.0
             inj_away = get_injury_impact(injuries, vt) if injuries else 0.0
+            if inj_home > 0 or inj_away > 0:
+                parts = []
+                if inj_home > 0:
+                    parts.append(f"{ht} -{inj_home:.0%}")
+                if inj_away > 0:
+                    parts.append(f"{vt} -{inj_away:.0%}")
+                analysis.injury_note = " | ".join(parts)
+
             travel_adj = get_travel(ht, vt)
             pub = get_public_data(public_data, ht, vt) if public_data else {"home_pct": 0.5, "away_pct": 0.5, "contrarian_signal": None, "strength": 0}
 
@@ -1269,31 +1623,28 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
                 contrarian_signal=pub.get("contrarian_signal"),
                 contrarian_strength=pub.get("strength", 0),
             )
+            analysis.our_home_prob = pred["our_home"]
+            analysis.our_away_prob = pred["our_away"]
 
             claude_result = None
-            if use_claude and ANTHROPIC_API_KEY and claude_calls < 10:
-                home_edge = pred["our_home"] - odds["home_prob"]
-                away_edge = pred["our_away"] - odds["away_prob"]
-                max_edge = max(home_edge, away_edge)
-                max_conf = max(pred["our_home"], pred["our_away"])
-
-                if max_conf >= 0.53 and max_edge >= 0.02:
-                    claude_result = await claude_analyze_game(
-                        session=session,
-                        home_team=ht,
-                        away_team=vt,
-                        home_form=home_form,
-                        away_form=away_form,
-                        book_home=odds["home_prob"],
-                        book_away=odds["away_prob"],
-                        injury_home=inj_home,
-                        injury_away=inj_away,
-                        public_home_pct=pub.get("home_pct", 0.5),
-                    )
-                    claude_calls += 1
-                    if claude_result and claude_result.get("pick"):
-                        logger.info(f"  Claude: {ht} vs {vt} -> {claude_result['pick']} ({claude_result.get('confidence',0):.0%})")
-                    await asyncio.sleep(1)
+            if use_claude and ANTHROPIC_API_KEY and claude_calls < 15:
+                claude_result = await claude_analyze_game(
+                    session=session,
+                    home_team=ht,
+                    away_team=vt,
+                    home_form=home_form,
+                    away_form=away_form,
+                    book_home=odds["home_prob"],
+                    book_away=odds["away_prob"],
+                    injury_home=inj_home,
+                    injury_away=inj_away,
+                    public_home_pct=pub.get("home_pct", 0.5),
+                )
+                claude_calls += 1
+                if claude_result and claude_result.get("pick"):
+                    analysis.claude_note = f"{claude_result['pick']} ({claude_result.get('confidence', 0):.0%}) — {claude_result.get('reasoning', '')[:80]}"
+                    logger.info(f"  Claude: {ht} vs {vt} -> {claude_result['pick']}")
+                await asyncio.sleep(1)
 
             signal = generate_signal(
                 home_team=ht,
@@ -1322,16 +1673,34 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
             if signal:
                 all_predictions.append(signal)
                 state.record_signal(signal)
-                star = "***" if signal.confidence >= 0.70 else "**" if signal.confidence >= 0.60 else "*"
-                triple = " [TRIPLE]" if signal.triple_confirmed else ""
-                logger.info(f"  SIGNAL{star}: {signal.pick} {signal.pick_team} | conf={signal.confidence:.0%} edge={signal.edge:.1%} bet=${signal.bet_size:.2f} ev=${signal.expected_value:+.2f}{triple}")
+                analysis.verdict = "BET"
+                analysis.verdict_team = signal.pick_team
+                analysis.confidence = signal.confidence
+                analysis.edge = signal.edge
+                logger.info(f"  BET: {signal.pick} {signal.pick_team} | conf={signal.confidence:.0%} edge={signal.edge:.1%} bet=${signal.bet_size:.2f}")
             else:
-                logger.info(f"  SKIP: {ht} vs {vt} | no edge or low confidence")
+                home_edge = pred["our_home"] - odds["home_prob"]
+                away_edge = pred["our_away"] - odds["away_prob"]
+                max_conf = max(pred["our_home"], pred["our_away"])
+                max_edge = max(home_edge, away_edge)
+                reasons = []
+                if max_conf < MIN_CONFIDENCE:
+                    reasons.append(f"Low confidence ({max_conf:.0%} < {MIN_CONFIDENCE:.0%})")
+                if max_edge < MIN_EDGE:
+                    reasons.append(f"Low edge ({max_edge:.1%} < {MIN_EDGE:.0%})")
+                if odds["n_bookmakers"] < 3:
+                    reasons.append(f"Too few bookmakers ({odds['n_bookmakers']})")
+                analysis.skip_reason = " | ".join(reasons) if reasons else "No edge found"
+                analysis.confidence = max_conf
+                analysis.edge = max_edge
+                logger.info(f"  SKIP: {ht} vs {vt} | {analysis.skip_reason}")
 
-        for key, odds in odds_data.items():
-            if odds["sport"] not in SOCCER_SPORTS:
-                continue
-            commence = odds.get("commence", "")
+            all_analyses.append(analysis)
+
+        nba_processed = {f"{a.home_team} vs {a.away_team}" for a in all_analyses}
+
+        for key, odds_entry in odds_data.items():
+            commence = odds_entry.get("commence", "")
             if commence:
                 try:
                     dt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
@@ -1339,29 +1708,39 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
                         continue
                 except Exception:
                     continue
+            else:
+                continue
+
+            home = odds_entry["home"]
+            away = odds_entry["away"]
+            game_key = f"{home} vs {away}"
+            if game_key in nba_processed:
+                continue
 
             total_analyzed += 1
-            home = odds["home"]
-            away = odds["away"]
-            start_str = dt.strftime("%H:%M UTC") if commence else "?"
+            start_str = dt.strftime("%H:%M UTC")
 
-            home_edge = odds["sharp_home"] - odds["home_prob"]
-            away_edge = odds["sharp_away"] - odds["away_prob"]
+            analysis = GameAnalysis(
+                home_team=home, away_team=away, sport=odds_entry["sport"], start_time=start_str,
+                book_home_prob=odds_entry["home_prob"], book_away_prob=odds_entry["away_prob"],
+                our_home_prob=odds_entry["sharp_home"], our_away_prob=odds_entry["sharp_away"],
+                n_bookmakers=odds_entry["n_bookmakers"], has_sharp=odds_entry["has_sharp"],
+            )
 
-            if abs(home_edge) < MIN_EDGE and abs(away_edge) < MIN_EDGE:
-                continue
+            home_edge = odds_entry["sharp_home"] - odds_entry["home_prob"]
+            away_edge = odds_entry["sharp_away"] - odds_entry["away_prob"]
 
             signal = generate_signal(
                 home_team=home,
                 away_team=away,
-                sport=odds["sport"],
+                sport=odds_entry["sport"],
                 start_time=start_str,
-                book_home=odds["home_prob"],
-                book_away=odds["away_prob"],
-                our_home=odds["sharp_home"],
-                our_away=odds["sharp_away"],
-                n_bookmakers=odds["n_bookmakers"],
-                has_sharp=odds["has_sharp"],
+                book_home=odds_entry["home_prob"],
+                book_away=odds_entry["away_prob"],
+                our_home=odds_entry["sharp_home"],
+                our_away=odds_entry["sharp_away"],
+                n_bookmakers=odds_entry["n_bookmakers"],
+                has_sharp=odds_entry["has_sharp"],
                 home_form=None,
                 away_form=None,
                 adjustments={"sharp_vs_market": max(home_edge, away_edge)},
@@ -1370,9 +1749,20 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
             if signal:
                 all_predictions.append(signal)
                 state.record_signal(signal)
-                logger.info(f"  SIGNAL: {signal.pick} {signal.pick_team} (soccer) | conf={signal.confidence:.0%}")
+                analysis.verdict = "BET"
+                analysis.verdict_team = signal.pick_team
+                analysis.confidence = signal.confidence
+                analysis.edge = signal.edge
+                logger.info(f"  BET: {signal.pick} {signal.pick_team} [{odds_entry['sport']}] | conf={signal.confidence:.0%}")
+            else:
+                max_edge_val = max(abs(home_edge), abs(away_edge))
+                analysis.skip_reason = f"Edge too low ({max_edge_val:.1%})" if max_edge_val < MIN_EDGE else "No edge"
+                analysis.confidence = max(odds_entry["sharp_home"], odds_entry["sharp_away"])
+                analysis.edge = max_edge_val
 
-        logger.info(f"\nTotal analyzed: {total_analyzed} | Signals: {len(all_predictions)} | Claude calls: {claude_calls}")
+            all_analyses.append(analysis)
+
+        logger.info(f"\nTotal: {total_analyzed} | Trades placed: {len(all_predictions)} | Claude: {claude_calls}")
         logger.info("=" * 55)
 
         report = format_report(all_predictions, total_analyzed, state)
@@ -1423,14 +1813,20 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True):
         signals_history.extend(preds_json)
         SIGNALS_FILE.write_text(json.dumps(signals_history, indent=2))
 
+        analyses_json = [asdict(a) for a in all_analyses]
+        (DATA_DIR / "last_analyses.json").write_text(json.dumps(analyses_json, indent=2))
+
         logger.info("Files saved to data/")
+        await send_telegram(all_predictions, all_analyses, total_analyzed, state)
 
-        await send_telegram(all_predictions, total_analyzed, state)
+    return all_predictions, all_analyses
 
-    return all_predictions
+
+_last_analyses: list[GameAnalysis] = []
 
 
 async def run_telegram_bot():
+    global _last_analyses
     if not TELEGRAM_TOKEN:
         logger.warning("No TELEGRAM_TOKEN, bot disabled")
         return
@@ -1441,15 +1837,13 @@ async def run_telegram_bot():
         logger.error("httpx not installed")
         return
 
-    state = BotState()
     last_update_id = 0
-
-    logger.info("Telegram bot started, listening for commands...")
+    logger.info("Telegram trading terminal started!")
 
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(url, params={
                     "offset": last_update_id + 1,
                     "timeout": 10,
@@ -1463,6 +1857,100 @@ async def run_telegram_bot():
 
                 for update in updates:
                     last_update_id = update["update_id"]
+
+                    cb = update.get("callback_query")
+                    if cb:
+                        cb_id = cb["id"]
+                        cb_data = cb.get("data", "")
+                        msg_id = cb.get("message", {}).get("message_id")
+                        cb_chat = str(cb.get("message", {}).get("chat", {}).get("id", ""))
+                        if cb_chat != TELEGRAM_CHAT_ID:
+                            await _tg_answer_cb(cb_id)
+                            continue
+
+                        await _tg_answer_cb(cb_id)
+                        state = BotState()
+
+                        if cb_data == "dash":
+                            text = build_dashboard_text(state)
+                            if msg_id:
+                                await _tg_edit(msg_id, text, _main_keyboard())
+                            else:
+                                await _tg_send(text, _main_keyboard())
+
+                        elif cb_data == "positions":
+                            text = build_positions_text(state)
+                            if msg_id:
+                                await _tg_edit(msg_id, text, _back_keyboard())
+                            else:
+                                await _tg_send(text, _back_keyboard())
+
+                        elif cb_data == "events":
+                            if not _last_analyses:
+                                analyses_file = DATA_DIR / "last_analyses.json"
+                                if analyses_file.exists():
+                                    try:
+                                        raw = json.loads(analyses_file.read_text())
+                                        _last_analyses = [GameAnalysis(**r) for r in raw]
+                                    except Exception:
+                                        pass
+                            text = build_events_text(_last_analyses)
+                            if len(text) > 4000:
+                                text = text[:4000] + "\n..."
+                            if msg_id:
+                                await _tg_edit(msg_id, text, _back_keyboard())
+                            else:
+                                await _tg_send(text, _back_keyboard())
+
+                        elif cb_data == "stats":
+                            text = build_stats_text(state)
+                            if msg_id:
+                                await _tg_edit(msg_id, text, _back_keyboard())
+                            else:
+                                await _tg_send(text, _back_keyboard())
+
+                        elif cb_data == "history":
+                            text = build_history_text(state)
+                            if len(text) > 4000:
+                                text = text[:4000] + "\n..."
+                            if msg_id:
+                                await _tg_edit(msg_id, text, _back_keyboard())
+                            else:
+                                await _tg_send(text, _back_keyboard())
+
+                        elif cb_data == "settings":
+                            text = build_settings_text(state)
+                            if msg_id:
+                                await _tg_edit(msg_id, text, _settings_keyboard(state))
+                            else:
+                                await _tg_send(text, _settings_keyboard(state))
+
+                        elif cb_data == "scan":
+                            if msg_id:
+                                await _tg_edit(msg_id, "<b>SCANNING...</b>\n\nAnalyzing all events for next 6 hours.\nThis takes 30-60 seconds...", _back_keyboard())
+                            try:
+                                _, analyses = await run_predictor(use_claude=True, use_scrapers=True)
+                                _last_analyses = analyses
+                            except Exception as e:
+                                logger.error(f"Scan failed: {e}")
+                                await _tg_send(f"Scan failed: {_esc(str(e)[:200])}", _main_keyboard())
+
+                        elif cb_data.startswith("bal_"):
+                            if cb_data == "bal_add_100":
+                                state.bankroll += 100
+                            elif cb_data == "bal_sub_100":
+                                state.bankroll = max(0, state.bankroll - 100)
+                            elif cb_data == "bal_add_500":
+                                state.bankroll += 500
+                            elif cb_data == "bal_reset":
+                                state.bankroll = 500.0
+                            state.save()
+                            text = build_settings_text(state)
+                            if msg_id:
+                                await _tg_edit(msg_id, text, _settings_keyboard(state))
+
+                        continue
+
                     message = update.get("message", {})
                     text = message.get("text", "").strip()
                     chat_id = str(message.get("chat", {}).get("id", ""))
@@ -1470,45 +1958,19 @@ async def run_telegram_bot():
                     if chat_id != TELEGRAM_CHAT_ID:
                         continue
 
-                    if text == "/start":
-                        await send_telegram_message("PREDICTOR V2 activated! Commands:\n/signals - Run predictions now\n/stats - View track record\n/balance - Check bankroll\n/history - Recent signals")
-
-                    elif text == "/signals":
-                        await send_telegram_message("Running predictions... (30-60 sec)")
-                        await run_predictor(use_claude=True, use_scrapers=True)
-
-                    elif text == "/stats":
+                    if text in ("/start", "/menu", "/help"):
                         state = BotState()
-                        done = state.signals_won + state.signals_lost
-                        msg = (
-                            f"TRACK RECORD\n{'='*25}\n"
-                            f"Signals: {state.signals_total} (W:{state.signals_won} L:{state.signals_lost} P:{state.signals_pending})\n"
-                            f"Win Rate: {state.win_rate:.0%}\n"
-                            f"P&L: ${state.total_pnl:+.2f}\n"
-                            f"ROI: {state.roi:+.1f}%\n"
-                            f"Bankroll: ${state.bankroll:.2f}\n"
-                            f"Streak: {state.current_streak}\n"
-                            f"Max DD: ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
-                            f"Mode: {'CAUTIOUS' if state.is_cautious_mode() else 'NORMAL'}"
-                        )
-                        await send_telegram_message(msg)
+                        dash = build_dashboard_text(state)
+                        await _tg_send(dash, _main_keyboard())
 
-                    elif text == "/balance":
-                        state = BotState()
-                        await send_telegram_message(f"Bankroll: ${state.bankroll:.2f}\nP&L: ${state.total_pnl:+.2f}\nPending: {state.signals_pending}")
-
-                    elif text == "/history":
-                        state = BotState()
-                        recent = state.history[-10:]
-                        if not recent:
-                            await send_telegram_message("No signals yet.")
-                        else:
-                            msg = "RECENT SIGNALS\n" + "="*25 + "\n"
-                            for h in reversed(recent):
-                                result_emoji = {"won": "W", "lost": "L", "pending": "?"}
-                                r = result_emoji.get(h.get("result", ""), "?")
-                                msg += f"[{r}] {h['pick']} {h['pick_team']} | {h['confidence']:.0%} | ${h['bet_size']:.2f}\n"
-                            await send_telegram_message(msg)
+                    elif text == "/scan":
+                        await _tg_send("<b>SCANNING...</b>\nAnalyzing events for next 6 hours...")
+                        try:
+                            _, analyses = await run_predictor(use_claude=True, use_scrapers=True)
+                            _last_analyses = analyses
+                        except Exception as e:
+                            logger.error(f"Scan failed: {e}")
+                            await _tg_send(f"Scan error: {_esc(str(e)[:200])}", _main_keyboard())
 
                     elif text.startswith("/won ") or text.startswith("/lost "):
                         parts = text.split(maxsplit=1)
@@ -1522,32 +1984,27 @@ async def run_telegram_bot():
                                 continue
                             if game_hint.lower() in entry.get("pick_team", "").lower() or game_hint.lower() in entry.get("game_id", "").lower():
                                 state.record_result(entry["game_id"], won)
-                                pnl = entry["potential_win"] if won else entry["potential_loss"]
-                                await send_telegram_message(f"Recorded: {'WIN' if won else 'LOSS'} on {entry['pick_team']}\nP&L: ${pnl:+.2f}\nBankroll: ${state.bankroll:.2f}")
+                                pnl_val = entry["potential_win"] if won else entry["potential_loss"]
+                                icon = "W" if won else "L"
+                                await _tg_send(
+                                    f"<b>[{icon}] {_esc(entry['pick_team'])}</b>\n"
+                                    f"P&amp;L: ${pnl_val:+.2f}\n"
+                                    f"Balance: <code>${state.bankroll:.2f}</code>",
+                                    _main_keyboard()
+                                )
                                 found = True
                                 break
 
                         if not found:
                             pending = [h for h in state.history if h.get("result") == "pending"]
                             if pending:
-                                msg = "Pending games:\n"
+                                msg = "<b>Game not found.</b> Pending:\n"
                                 for h in pending:
-                                    msg += f"  {h['pick_team']} — /{'won' if True else 'lost'} {h['pick_team'].split()[-1]}\n"
-                                await send_telegram_message(f"Game not found. {msg}")
+                                    team = _esc(h.get("pick_team", "?"))
+                                    msg += f"  {team} — <code>/won {h.get('pick_team', '').split()[-1]}</code>\n"
+                                await _tg_send(msg)
                             else:
-                                await send_telegram_message("No pending games.")
-
-                    elif text == "/help":
-                        await send_telegram_message(
-                            "PREDICTOR V2 COMMANDS\n"
-                            "/signals - Run predictions\n"
-                            "/stats - Track record\n"
-                            "/balance - Bankroll\n"
-                            "/history - Recent signals\n"
-                            "/won <team> - Record win\n"
-                            "/lost <team> - Record loss\n"
-                            "/help - This message"
-                        )
+                                await _tg_send("No pending games.")
 
         except Exception as e:
             logger.error(f"Bot error: {e}")
@@ -1557,20 +2014,22 @@ async def run_telegram_bot():
 
 
 async def autopilot():
-    logger.info("AUTOPILOT MODE — Running every 2 hours")
+    global _last_analyses
+    logger.info(f"AUTOPILOT — scanning every {AUTOPILOT_INTERVAL // 60} min, window {WINDOW_HOURS}h")
     while True:
         try:
-            await run_predictor(use_claude=True, use_scrapers=True)
+            _, analyses = await run_predictor(use_claude=True, use_scrapers=True)
+            _last_analyses = analyses
         except Exception as e:
-            logger.error(f"Autopilot run failed: {e}")
-        logger.info("Next run in 2 hours...")
-        await asyncio.sleep(7200)
+            logger.error(f"Autopilot scan failed: {e}")
+        logger.info(f"Next scan in {AUTOPILOT_INTERVAL // 60} min...")
+        await asyncio.sleep(AUTOPILOT_INTERVAL)
 
 
 async def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Sport Predictor V2")
-    parser.add_argument("--mode", choices=["once", "bot", "autopilot", "full"], default="once")
+    parser = argparse.ArgumentParser(description="Sport Predictor V2 — Trading Terminal")
+    parser.add_argument("--mode", choices=["once", "bot", "autopilot", "full"], default="full")
     parser.add_argument("--no-claude", action="store_true")
     parser.add_argument("--no-scrapers", action="store_true")
     args = parser.parse_args()
