@@ -1260,33 +1260,33 @@ def build_dashboard_text(state: BotState) -> str:
     else:
         mode_str = "\u2705 \u041d\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u044b\u0439"
 
-    pnl_all_icon = "\ud83d\udfe2" if state.total_pnl >= 0 else "\ud83d\udd34"
-    pnl_today_icon = "\ud83d\udfe2" if pnl_today >= 0 else "\ud83d\udd34"
-    pnl_7d_icon = "\ud83d\udfe2" if pnl_7d >= 0 else "\ud83d\udd34"
+    pnl_all_icon = "🟢" if state.total_pnl >= 0 else "🔴"
+    pnl_today_icon = "🟢" if pnl_today >= 0 else "🔴"
+    pnl_7d_icon = "🟢" if pnl_7d >= 0 else "🔴"
     pnl_sign = "+" if state.total_pnl >= 0 else ""
     pnl_today_sign = "+" if pnl_today >= 0 else ""
     pnl_7d_sign = "+" if pnl_7d >= 0 else ""
 
-    streak_icon = "\ud83d\udd25" if state.current_streak > 0 else ("\u2744\ufe0f" if state.current_streak < 0 else "\u2796")
+    streak_icon = "🔥" if state.current_streak > 0 else ("\u2744\ufe0f" if state.current_streak < 0 else "\u2796")
 
     return (
-        f"\ud83d\udcb9 <b>\u0422\u0420\u0415\u0419\u0414\u0418\u041d\u0413 \u0422\u0415\u0420\u041c\u0418\u041d\u0410\u041b</b>\n"
-        f"\ud83d\udd52 {now.strftime('%d.%m.%Y %H:%M UTC')}\n"
+        f"💹 <b>\u0422\u0420\u0415\u0419\u0414\u0418\u041d\u0413 \u0422\u0415\u0420\u041c\u0418\u041d\u0410\u041b</b>\n"
+        f"🕒 {now.strftime('%d.%m.%Y %H:%M UTC')}\n"
         f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-        f"\ud83d\udcb0 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b>  <code>${state.bankroll:.2f}</code>\n\n"
+        f"💰 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b>  <code>${state.bankroll:.2f}</code>\n\n"
         f"{pnl_all_icon} <b>P&amp;L \u0432\u0441\u0435\u0433\u043e:</b>  <code>{pnl_sign}${state.total_pnl:.2f}</code>\n"
         f"{pnl_7d_icon} <b>P&amp;L 7\u0434:</b>    <code>{pnl_7d_sign}${pnl_7d:.2f}</code>  ({wins_7d}\u2705/{losses_7d}\u274c)\n"
         f"{pnl_today_icon} <b>P&amp;L \u0441\u0435\u0433\u043e\u0434\u043d\u044f:</b> <code>{pnl_today_sign}${pnl_today:.2f}</code>  ({wins_today}\u2705/{losses_today}\u274c)\n\n"
-        f"\ud83d\udcbc <b>\u041e\u0442\u043a\u0440\u044b\u0442\u043e:</b>  {len(pending)} \u043f\u043e\u0437\u0438\u0446\u0438\u0439  (${pending_exposure:.2f})\n"
-        f"\ud83c\udfaf <b>\u0412\u0441\u0435\u0433\u043e \u0441\u0434\u0435\u043b\u043e\u043a:</b>  {state.signals_total}\n"
-        f"\ud83c\udfc6 <b>W/L:</b>   {state.signals_won}\u2705 / {state.signals_lost}\u274c\n"
-        f"\ud83d\udcca <b>\u0412\u0438\u043d\u0440\u0435\u0439\u0442:</b> <code>{state.win_rate:.0%}</code>\n"
-        f"\ud83d\udcc8 <b>ROI:</b>   <code>{state.roi:+.1f}%</code>\n"
+        f"💼 <b>\u041e\u0442\u043a\u0440\u044b\u0442\u043e:</b>  {len(pending)} \u043f\u043e\u0437\u0438\u0446\u0438\u0439  (${pending_exposure:.2f})\n"
+        f"🎯 <b>\u0412\u0441\u0435\u0433\u043e \u0441\u0434\u0435\u043b\u043e\u043a:</b>  {state.signals_total}\n"
+        f"🏆 <b>W/L:</b>   {state.signals_won}\u2705 / {state.signals_lost}\u274c\n"
+        f"📊 <b>\u0412\u0438\u043d\u0440\u0435\u0439\u0442:</b> <code>{state.win_rate:.0%}</code>\n"
+        f"📈 <b>ROI:</b>   <code>{state.roi:+.1f}%</code>\n"
         f"{streak_icon} <b>\u0421\u0435\u0440\u0438\u044f:</b>  {state.current_streak}\n"
-        f"\ud83d\udcc9 <b>\u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0441\u0430\u0434\u043a\u0430:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
-        f"\ud83d\udee1\ufe0f <b>\u0420\u0435\u0436\u0438\u043c:</b>  {mode_str}\n"
+        f"📉 <b>\u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0441\u0430\u0434\u043a\u0430:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
+        f"🛡\ufe0f <b>\u0420\u0435\u0436\u0438\u043c:</b>  {mode_str}\n"
         f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-        f"\ud83d\udd04 <i>\u0410\u0432\u0442\u043e\u0441\u043a\u0430\u043d \u043a\u0430\u0436\u0434\u044b\u0435 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d | \u041e\u043a\u043d\u043e: {WINDOW_HOURS}\u0447</i>"
+        f"🔄 <i>\u0410\u0432\u0442\u043e\u0441\u043a\u0430\u043d \u043a\u0430\u0436\u0434\u044b\u0435 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d | \u041e\u043a\u043d\u043e: {WINDOW_HOURS}\u0447</i>"
     )
 
 
@@ -1294,19 +1294,19 @@ def build_positions_text(state: BotState) -> str:
     pending = [h for h in state.history if h.get("result") == "pending"]
     if not pending:
         return (
-            "\ud83d\udcbc <b>\u041e\u0422\u041a\u0420\u042b\u0422\u042b\u0415 \u041f\u041e\u0417\u0418\u0426\u0418\u0418</b>\n"
+            "💼 <b>\u041e\u0422\u041a\u0420\u042b\u0422\u042b\u0415 \u041f\u041e\u0417\u0418\u0426\u0418\u0418</b>\n"
             "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-            "\ud83d\ude34 \u041d\u0435\u0442 \u043e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u0439\n\n"
-            "\ud83d\udd04 <i>\u041f\u043e\u0437\u0438\u0446\u0438\u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e\u0442\u0441\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043f\u0440\u0438 \u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0438</i>"
+            "😴 \u041d\u0435\u0442 \u043e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u0439\n\n"
+            "🔄 <i>\u041f\u043e\u0437\u0438\u0446\u0438\u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u044e\u0442\u0441\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043f\u0440\u0438 \u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0438</i>"
         )
 
     total_exposure = sum(h.get("bet_size", 0) for h in pending)
     total_potential = sum(h.get("potential_win", 0) for h in pending)
 
     lines = [
-        "\ud83d\udcbc <b>\u041e\u0422\u041a\u0420\u042b\u0422\u042b\u0415 \u041f\u041e\u0417\u0418\u0426\u0418\u0418</b>",
+        "💼 <b>\u041e\u0422\u041a\u0420\u042b\u0422\u042b\u0415 \u041f\u041e\u0417\u0418\u0426\u0418\u0418</b>",
         "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-        f"\ud83d\udcca \u041e\u0442\u043a\u0440\u044b\u0442\u043e: {len(pending)}  |  \u0420\u0438\u0441\u043a: ${total_exposure:.2f}  |  \u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0444\u0438\u0442: +${total_potential:.2f}",
+        f"📊 \u041e\u0442\u043a\u0440\u044b\u0442\u043e: {len(pending)}  |  \u0420\u0438\u0441\u043a: ${total_exposure:.2f}  |  \u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0444\u0438\u0442: +${total_potential:.2f}",
         "",
     ]
 
@@ -1314,13 +1314,13 @@ def build_positions_text(state: BotState) -> str:
         sport_icon = _sport_icon(h.get("sport", ""))
         conf = h.get("confidence", 0)
         bar = _conf_bar(conf)
-        triple = " \ud83d\udd25\ud83d\udd25\ud83d\udd25" if h.get("triple_confirmed") else ""
+        triple = " 🔥🔥🔥" if h.get("triple_confirmed") else ""
         lines.append(
             f"<b>#{i} {sport_icon} {_esc(h.get('pick_team', '?'))}</b>{triple}\n"
             f"    {_esc(h.get('home_team', '?'))} vs {_esc(h.get('away_team', '?'))}\n"
-            f"    \ud83c\udfaf {bar}\n"
-            f"    \ud83d\udcc0 \u042d\u0434\u0436: {h.get('edge', 0):.1%} | \ud83d\udcb5 \u0421\u0442\u0430\u0432\u043a\u0430: ${h.get('bet_size', 0):.2f}\n"
-            f"    \ud83d\udfe2 \u0412\u044b\u0438\u0433\u0440\u044b\u0448: +${h.get('potential_win', 0):.2f} | \ud83d\udd34 \u041f\u0440\u043e\u0438\u0433\u0440\u044b\u0448: -${h.get('bet_size', 0):.2f}\n"
+            f"    🎯 {bar}\n"
+            f"    📀 \u042d\u0434\u0436: {h.get('edge', 0):.1%} | 💵 \u0421\u0442\u0430\u0432\u043a\u0430: ${h.get('bet_size', 0):.2f}\n"
+            f"    🟢 \u0412\u044b\u0438\u0433\u0440\u044b\u0448: +${h.get('potential_win', 0):.2f} | 🔴 \u041f\u0440\u043e\u0438\u0433\u0440\u044b\u0448: -${h.get('bet_size', 0):.2f}\n"
         )
     return "\n".join(lines)
 
@@ -1355,19 +1355,19 @@ def build_stats_text(state: BotState) -> str:
         total = w + l
         wr = w / total if total > 0 else 0
         roi = pnl / wagered * 100 if wagered > 0 else 0
-        pnl_icon = "\ud83d\udfe2" if pnl >= 0 else "\ud83d\udd34"
+        pnl_icon = "🟢" if pnl >= 0 else "🔴"
         pnl_sign = "+" if pnl >= 0 else ""
         rows.append(f"  {pnl_icon} <b>{label:5s}</b> {w}\u2705/{l}\u274c  WR:{wr:.0%}  {pnl_sign}${pnl:.2f}  ROI:{roi:+.0f}%")
 
-    streak_icon = "\ud83d\udd25" if state.current_streak > 0 else ("\u2744\ufe0f" if state.current_streak < 0 else "\u2796")
+    streak_icon = "🔥" if state.current_streak > 0 else ("\u2744\ufe0f" if state.current_streak < 0 else "\u2796")
 
     return (
-        "\ud83d\udcc8 <b>\u0421\u0422\u0410\u0422\u0418\u0421\u0422\u0418\u041a\u0410</b>\n"
+        "📈 <b>\u0421\u0422\u0410\u0422\u0418\u0421\u0422\u0418\u041a\u0410</b>\n"
         "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
         + "\n".join(rows) + "\n\n"
-        f"\ud83d\udcb0 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b> <code>${state.bankroll:.2f}</code>\n"
-        f"\ud83c\udfe6 <b>\u0421\u0442\u0430\u0440\u0442:</b> $500.00\n"
-        f"\ud83d\udcc9 <b>\u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0441\u0430\u0434\u043a\u0430:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
+        f"💰 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b> <code>${state.bankroll:.2f}</code>\n"
+        f"🏦 <b>\u0421\u0442\u0430\u0440\u0442:</b> $500.00\n"
+        f"📉 <b>\u041c\u0430\u043a\u0441 \u043f\u0440\u043e\u0441\u0430\u0434\u043a\u0430:</b> ${state.max_drawdown:.0f} ({state.drawdown_pct:.0f}%)\n"
         f"{streak_icon} <b>\u0422\u0435\u043a\u0443\u0449\u0430\u044f \u0441\u0435\u0440\u0438\u044f:</b> {state.current_streak}"
     )
 
@@ -1376,13 +1376,13 @@ def build_history_text(state: BotState) -> str:
     recent = state.history[-15:]
     if not recent:
         return (
-            "\ud83d\udcdd <b>\u0418\u0421\u0422\u041e\u0420\u0418\u042f \u0421\u0414\u0415\u041b\u041e\u041a</b>\n"
+            "📝 <b>\u0418\u0421\u0422\u041e\u0420\u0418\u042f \u0421\u0414\u0415\u041b\u041e\u041a</b>\n"
             "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-            "\ud83d\ude34 \u0421\u0434\u0435\u043b\u043e\u043a \u043f\u043e\u043a\u0430 \u043d\u0435\u0442"
+            "😴 \u0421\u0434\u0435\u043b\u043e\u043a \u043f\u043e\u043a\u0430 \u043d\u0435\u0442"
         )
 
     lines = [
-        "\ud83d\udcdd <b>\u0418\u0421\u0422\u041e\u0420\u0418\u042f \u0421\u0414\u0415\u041b\u041e\u041a</b>",
+        "📝 <b>\u0418\u0421\u0422\u041e\u0420\u0418\u042f \u0421\u0414\u0415\u041b\u041e\u041a</b>",
         "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
         "",
     ]
@@ -1391,11 +1391,11 @@ def build_history_text(state: BotState) -> str:
         if result == "won":
             icon = "\u2705"
             pnl = h.get("potential_win", 0)
-            pnl_str = f"\ud83d\udfe2 +${pnl:.2f}"
+            pnl_str = f"🟢 +${pnl:.2f}"
         elif result == "lost":
             icon = "\u274c"
             pnl = h.get("potential_loss", 0)
-            pnl_str = f"\ud83d\udd34 -${abs(pnl):.2f}"
+            pnl_str = f"🔴 -${abs(pnl):.2f}"
         else:
             icon = "\u23f3"
             pnl_str = "\u231b \u0436\u0434\u0451\u043c..."
@@ -1414,51 +1414,51 @@ def build_history_text(state: BotState) -> str:
 def build_events_text(all_analyses: list[GameAnalysis]) -> str:
     if not all_analyses:
         return (
-            "\ud83c\udfaf <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>\n"
+            "🎯 <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>\n"
             "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-            "\ud83d\ude34 \u0421\u043e\u0431\u044b\u0442\u0438\u0439 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e\n\n"
-            "\ud83d\udd04 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 30 \u043c\u0438\u043d</i>"
+            "😴 \u0421\u043e\u0431\u044b\u0442\u0438\u0439 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e\n\n"
+            "🔄 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 30 \u043c\u0438\u043d</i>"
         )
 
     bets = [a for a in all_analyses if a.verdict == "BET"]
     skips = [a for a in all_analyses if a.verdict != "BET"]
 
     lines = [
-        "\ud83c\udfaf <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>",
+        "🎯 <b>\u0421\u041e\u0411\u042b\u0422\u0418\u042f (6\u0447)</b>",
         "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
-        f"\ud83d\udcca \u0412\u0441\u0435\u0433\u043e: {len(all_analyses)}  |  \ud83d\udfe2 \u0421\u0442\u0430\u0432\u0438\u043c: {len(bets)}  |  \u26d4 \u041f\u0440\u043e\u043f\u0443\u0441\u043a: {len(skips)}",
+        f"📊 \u0412\u0441\u0435\u0433\u043e: {len(all_analyses)}  |  🟢 \u0421\u0442\u0430\u0432\u0438\u043c: {len(bets)}  |  \u26d4 \u041f\u0440\u043e\u043f\u0443\u0441\u043a: {len(skips)}",
         "",
     ]
 
     if bets:
-        lines.append("\ud83d\udd25 <b>\u0421\u0422\u0410\u0412\u0418\u041c:</b>")
+        lines.append("🔥 <b>\u0421\u0422\u0410\u0412\u0418\u041c:</b>")
         for a in sorted(bets, key=lambda x: x.confidence, reverse=True):
             icon = _sport_icon(a.sport)
             bar = _conf_bar(a.confidence)
             lines.append(
-                f"\n{icon} <b>\ud83d\udfe2 {_esc(a.verdict_team)}</b>  \ud83d\udd52 {a.start_time}\n"
+                f"\n{icon} <b>🟢 {_esc(a.verdict_team)}</b>  🕒 {a.start_time}\n"
                 f"    {_esc(a.home_team)} vs {_esc(a.away_team)}\n"
-                f"    \ud83c\udfaf {bar}\n"
-                f"    \ud83d\udcc0 \u042d\u0434\u0436: {a.edge:.1%} | \ud83d\udcda \u0411\u0443\u043a\u0438: \u0414={a.book_home_prob:.0%} \u0413={a.book_away_prob:.0%}\n"
-                f"    \ud83e\udde0 \u041d\u0430\u0448\u0438: \u0414={a.our_home_prob:.0%} \u0413={a.our_away_prob:.0%}"
+                f"    🎯 {bar}\n"
+                f"    📀 \u042d\u0434\u0436: {a.edge:.1%} | 📚 \u0411\u0443\u043a\u0438: \u0414={a.book_home_prob:.0%} \u0413={a.book_away_prob:.0%}\n"
+                f"    🧠 \u041d\u0430\u0448\u0438: \u0414={a.our_home_prob:.0%} \u0413={a.our_away_prob:.0%}"
             )
             if a.home_form_str:
-                lines.append(f"    \ud83c\udfe0 \u0414\u043e\u043c: {_esc(a.home_form_str)}")
+                lines.append(f"    🏠 \u0414\u043e\u043c: {_esc(a.home_form_str)}")
             if a.away_form_str:
                 lines.append(f"    \u2708\ufe0f \u0413\u043e\u0441\u0442\u0438: {_esc(a.away_form_str)}")
             if a.injury_note:
-                lines.append(f"    \ud83e\ude79 \u0422\u0440\u0430\u0432\u043c\u044b: {_esc(a.injury_note)}")
+                lines.append(f"    🩹 \u0422\u0440\u0430\u0432\u043c\u044b: {_esc(a.injury_note)}")
             if a.claude_note:
-                lines.append(f"    \ud83e\udd16 AI: {_esc(a.claude_note)}")
+                lines.append(f"    🤖 AI: {_esc(a.claude_note)}")
 
     if skips:
         lines.append(f"\n\u26d4 <b>\u041f\u0420\u041e\u041f\u0423\u0421\u041a\u0410\u0415\u041c:</b>")
         for a in skips:
             icon = _sport_icon(a.sport)
             lines.append(
-                f"\n{icon} {_esc(a.home_team)} vs {_esc(a.away_team)}  \ud83d\udd52 {a.start_time}\n"
+                f"\n{icon} {_esc(a.home_team)} vs {_esc(a.away_team)}  🕒 {a.start_time}\n"
                 f"    \u274c \u041f\u0440\u0438\u0447\u0438\u043d\u0430: {_esc(a.skip_reason)}\n"
-                f"    \ud83d\udcda \u0411\u0443\u043a\u0438: \u0414={a.book_home_prob:.0%} \u0413={a.book_away_prob:.0%}"
+                f"    📚 \u0411\u0443\u043a\u0438: \u0414={a.book_home_prob:.0%} \u0413={a.book_away_prob:.0%}"
             )
 
     return "\n".join(lines)
@@ -1470,16 +1470,16 @@ def build_settings_text(state: BotState) -> str:
     return (
         "\u2699\ufe0f <b>\u041d\u0410\u0421\u0422\u0420\u041e\u0419\u041a\u0418</b>\n"
         "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-        f"\ud83d\udcb0 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b> <code>${state.bankroll:.2f}</code>\n"
-        f"\ud83d\udcb5 <b>\u041c\u0430\u043a\u0441 \u0441\u0442\u0430\u0432\u043a\u0430:</b> {MAX_BET_PCT:.0%} \u043e\u0442 \u0431\u0430\u043b\u0430\u043d\u0441\u0430 (${state.bankroll * MAX_BET_PCT:.2f})\n"
-        f"\ud83c\udfaf <b>\u041c\u0438\u043d \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u044c:</b> {MIN_CONFIDENCE:.0%}\n"
-        f"\ud83d\udcc0 <b>\u041c\u0438\u043d \u044d\u0434\u0436:</b> {MIN_EDGE:.0%}\n"
-        f"\ud83d\udcca <b>Kelly:</b> {KELLY_FRACTION:.0%}\n"
-        f"\ud83d\udd52 <b>\u041e\u043a\u043d\u043e \u0441\u043a\u0430\u043d\u0430:</b> {WINDOW_HOURS}\u0447\n"
-        f"\ud83d\udd04 <b>\u0410\u0432\u0442\u043e\u0441\u043a\u0430\u043d:</b> \u043a\u0430\u0436\u0434\u044b\u0435 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d\n"
+        f"💰 <b>\u0411\u0430\u043b\u0430\u043d\u0441:</b> <code>${state.bankroll:.2f}</code>\n"
+        f"💵 <b>\u041c\u0430\u043a\u0441 \u0441\u0442\u0430\u0432\u043a\u0430:</b> {MAX_BET_PCT:.0%} \u043e\u0442 \u0431\u0430\u043b\u0430\u043d\u0441\u0430 (${state.bankroll * MAX_BET_PCT:.2f})\n"
+        f"🎯 <b>\u041c\u0438\u043d \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u044c:</b> {MIN_CONFIDENCE:.0%}\n"
+        f"📀 <b>\u041c\u0438\u043d \u044d\u0434\u0436:</b> {MIN_EDGE:.0%}\n"
+        f"📊 <b>Kelly:</b> {KELLY_FRACTION:.0%}\n"
+        f"🕒 <b>\u041e\u043a\u043d\u043e \u0441\u043a\u0430\u043d\u0430:</b> {WINDOW_HOURS}\u0447\n"
+        f"🔄 <b>\u0410\u0432\u0442\u043e\u0441\u043a\u0430\u043d:</b> \u043a\u0430\u0436\u0434\u044b\u0435 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d\n"
         f"{mode_icon} <b>\u0420\u0435\u0436\u0438\u043c:</b> {mode_name}\n"
-        f"\ud83d\udcdd <b>\u0422\u0438\u043f:</b> Paper Trading (\u0431\u0435\u0437 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0445 \u0434\u0435\u043d\u0435\u0433)\n\n"
-        "\ud83d\udc47 <i>\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u0431\u0430\u043b\u0430\u043d\u0441:</i>"
+        f"📝 <b>\u0422\u0438\u043f:</b> Paper Trading (\u0431\u0435\u0437 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0445 \u0434\u0435\u043d\u0435\u0433)\n\n"
+        "👇 <i>\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u0431\u0430\u043b\u0430\u043d\u0441:</i>"
     )
 
 
@@ -1494,11 +1494,11 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
 
     if n == 0:
         msg = (
-            f"\ud83d\udd0d <b>\u0421\u041a\u0410\u041d \u0417\u0410\u0412\u0415\u0420\u0428\u0401\u041d</b> | {now.strftime('%H:%M UTC')}\n"
+            f"🔍 <b>\u0421\u041a\u0410\u041d \u0417\u0410\u0412\u0415\u0420\u0428\u0401\u041d</b> | {now.strftime('%H:%M UTC')}\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"\ud83d\udcca \u041f\u0440\u043e\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u043e: {all_games_count} \u0441\u043e\u0431\u044b\u0442\u0438\u0439\n"
-            f"\ud83d\ude34 \u0421\u0438\u0433\u043d\u0430\u043b\u043e\u0432: 0 \u2014 \u043d\u0435\u0442 \u0432\u044b\u0433\u043e\u0434\u043d\u044b\u0445 \u0441\u0442\u0430\u0432\u043e\u043a\n\n"
-            f"\ud83d\udd04 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d</i>"
+            f"📊 \u041f\u0440\u043e\u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u043e: {all_games_count} \u0441\u043e\u0431\u044b\u0442\u0438\u0439\n"
+            f"😴 \u0421\u0438\u0433\u043d\u0430\u043b\u043e\u0432: 0 \u2014 \u043d\u0435\u0442 \u0432\u044b\u0433\u043e\u0434\u043d\u044b\u0445 \u0441\u0442\u0430\u0432\u043e\u043a\n\n"
+            f"🔄 <i>\u0421\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d</i>"
         )
         await _tg_send(msg, _main_keyboard())
         return
@@ -1509,16 +1509,16 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
     triple_count = sum(1 for p in predictions if p.triple_confirmed)
 
     header = (
-        f"\ud83d\udea8 <b>\u041d\u041e\u0412\u042b\u0415 \u0421\u0422\u0410\u0412\u041a\u0418!</b>\n"
-        f"\ud83d\udd52 {now.strftime('%d.%m.%Y %H:%M UTC')}\n"
+        f"🚨 <b>\u041d\u041e\u0412\u042b\u0415 \u0421\u0422\u0410\u0412\u041a\u0418!</b>\n"
+        f"🕒 {now.strftime('%d.%m.%Y %H:%M UTC')}\n"
         f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-        f"\ud83d\udcca \u0421\u043e\u0431\u044b\u0442\u0438\u0439: {all_games_count} | <b>\ud83d\udfe2 \u0421\u0442\u0430\u0432\u043e\u043a: {n}</b> | \ud83d\udd25 \u0422\u0440\u043e\u0439\u043d\u043e\u0439: {triple_count}\n"
-        f"\ud83c\udfaf \u0421\u0440. \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u044c: {avg_conf:.0%} | \ud83d\udcb0 EV: +${total_ev:.2f}\n"
-        f"\ud83d\udcb5 \u041f\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u043e: ${total_bet:.2f} (Kelly)\n"
+        f"📊 \u0421\u043e\u0431\u044b\u0442\u0438\u0439: {all_games_count} | <b>🟢 \u0421\u0442\u0430\u0432\u043e\u043a: {n}</b> | 🔥 \u0422\u0440\u043e\u0439\u043d\u043e\u0439: {triple_count}\n"
+        f"🎯 \u0421\u0440. \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u044c: {avg_conf:.0%} | 💰 EV: +${total_ev:.2f}\n"
+        f"💵 \u041f\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u043e: ${total_bet:.2f} (Kelly)\n"
     )
 
     if state.signals_won + state.signals_lost > 0:
-        header += f"\ud83c\udfc6 \u0420\u0435\u043a\u043e\u0440\u0434: {state.signals_won}\u2705/{state.signals_lost}\u274c ({state.win_rate:.0%})\n"
+        header += f"🏆 \u0420\u0435\u043a\u043e\u0440\u0434: {state.signals_won}\u2705/{state.signals_lost}\u274c ({state.win_rate:.0%})\n"
 
     header += "\n"
 
@@ -1526,35 +1526,35 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
     for i, p in enumerate(sorted_preds, 1):
         icon = _sport_icon(p.sport)
         bar = _conf_bar(p.confidence)
-        triple_mark = " \ud83d\udd25\ud83d\udd25\ud83d\udd25" if p.triple_confirmed else ""
+        triple_mark = " 🔥🔥🔥" if p.triple_confirmed else ""
 
         pick_ru = "ДОМ" if p.pick == "HOME" else "ГОСТИ"
         header += (
             f"<b>#{i} {icon} {pick_ru} {_esc(p.pick_team)}</b>{triple_mark}\n"
-            f"    {_esc(p.home_team)} vs {_esc(p.away_team)} \ud83d\udd52 {p.start_time}\n"
-            f"    \ud83c\udfaf {bar} | \ud83d\udcc0 \u042d\u0434\u0436: {p.edge:.1%}\n"
-            f"    \ud83d\udcb5 \u0421\u0442\u0430\u0432\u043a\u0430: <code>${p.bet_size:.2f}</code> | \ud83d\udfe2 \u0412\u044b\u0438\u0433\u0440\u044b\u0448: +${p.potential_win:.2f}\n"
+            f"    {_esc(p.home_team)} vs {_esc(p.away_team)} 🕒 {p.start_time}\n"
+            f"    🎯 {bar} | 📀 \u042d\u0434\u0436: {p.edge:.1%}\n"
+            f"    💵 \u0421\u0442\u0430\u0432\u043a\u0430: <code>${p.bet_size:.2f}</code> | 🟢 \u0412\u044b\u0438\u0433\u0440\u044b\u0448: +${p.potential_win:.2f}\n"
         )
 
         extras = []
         if p.home_form:
-            extras.append(f"\ud83c\udfe0 {p.home_form.get('record','-')} L10:{p.home_form.get('l10','-')}")
+            extras.append(f"🏠 {p.home_form.get('record','-')} L10:{p.home_form.get('l10','-')}")
         if p.away_form:
             extras.append(f"\u2708\ufe0f {p.away_form.get('record','-')} L10:{p.away_form.get('l10','-')}")
         if p.injury_impact_home > 0:
-            extras.append(f"\ud83e\ude79\u0414:-{p.injury_impact_home:.0%}")
+            extras.append(f"🩹\u0414:-{p.injury_impact_home:.0%}")
         if p.injury_impact_away > 0:
-            extras.append(f"\ud83e\ude79\u0413:-{p.injury_impact_away:.0%}")
+            extras.append(f"🩹\u0413:-{p.injury_impact_away:.0%}")
         if p.claude_pick:
             claude_pick_ru = "ДОМ" if p.claude_pick == "HOME" else "ГОСТИ"
-            extras.append(f"\ud83e\udd16 AI:{claude_pick_ru}({p.claude_confidence:.0%})")
+            extras.append(f"🤖 AI:{claude_pick_ru}({p.claude_confidence:.0%})")
         if p.contrarian_signal:
-            extras.append(f"\ud83d\udd04 {_esc(p.contrarian_signal)}")
+            extras.append(f"🔄 {_esc(p.contrarian_signal)}")
         if extras:
             header += f"    <i>{' | '.join(extras)}</i>\n"
         header += "\n"
 
-    header += f"\ud83d\udcb0 <i>\u0411\u0430\u043b\u0430\u043d\u0441: ${state.bankroll:.2f} | \u0421\u043b\u0435\u0434. \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d</i>"
+    header += f"💰 <i>\u0411\u0430\u043b\u0430\u043d\u0441: ${state.bankroll:.2f} | \u0421\u043b\u0435\u0434. \u0441\u043a\u0430\u043d \u0447\u0435\u0440\u0435\u0437 {AUTOPILOT_INTERVAL // 60} \u043c\u0438\u043d</i>"
 
     if len(header) > 4000:
         header = header[:4000] + "\n..."
