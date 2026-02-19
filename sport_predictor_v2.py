@@ -471,13 +471,21 @@ async def fetch_todays_nba_games(session: aiohttp.ClientSession) -> list[dict]:
     return upcoming
 
 
+_ODDS_CACHE_FILE = DATA_DIR / "odds_cache.json"
+_ODDS_CACHE_MAX_AGE = 3600
+
+
 async def fetch_odds_api(session: aiohttp.ClientSession) -> dict:
     if not ODDS_API_KEY:
         logger.warning("No ODDS_API_KEY")
-        return {}
+        return _load_odds_cache()
 
     odds_data = {}
+    api_calls = 0
+    quota_exhausted = False
     for sport in ALL_SPORTS:
+        if quota_exhausted:
+            break
         url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
         params = {
             "apiKey": ODDS_API_KEY,
@@ -488,16 +496,16 @@ async def fetch_odds_api(session: aiohttp.ClientSession) -> dict:
         try:
             await asyncio.sleep(1.2)
             async with session.get(url, params=params) as resp:
-                if resp.status == 429:
-                    logger.warning(f"Odds API rate limited on {sport}, waiting 5s...")
-                    await asyncio.sleep(5)
-                    async with session.get(url, params=params) as resp2:
-                        if resp2.status == 200:
-                            resp = resp2
-                        else:
-                            continue
+                remaining = resp.headers.get("x-requests-remaining", "?")
+                if resp.status == 429 or resp.status == 401:
+                    logger.warning(f"Odds API quota exhausted (status={resp.status}), using cache")
+                    quota_exhausted = True
+                    break
                 if resp.status != 200:
+                    logger.warning(f"Odds API {sport}: status {resp.status}")
                     continue
+                api_calls += 1
+                logger.info(f"  Odds API {sport}: OK (remaining: {remaining})")
                 events = await resp.json()
                 for ev in events:
                     home = ev.get("home_team", "")
@@ -567,8 +575,41 @@ async def fetch_odds_api(session: aiohttp.ClientSession) -> dict:
         except Exception as e:
             logger.error(f"Odds API error for {sport}: {e}")
 
-    logger.info(f"Odds API: {len(odds_data)} events with odds")
+    if odds_data:
+        _save_odds_cache(odds_data)
+        logger.info(f"Odds API: {len(odds_data)} events with odds ({api_calls} API calls)")
+    elif quota_exhausted:
+        odds_data = _load_odds_cache()
+        logger.info(f"Odds API: using cached {len(odds_data)} events (quota exhausted)")
+    else:
+        odds_data = _load_odds_cache()
+        logger.info(f"Odds API: fallback to cached {len(odds_data)} events")
     return odds_data
+
+
+def _save_odds_cache(odds_data: dict):
+    try:
+        DATA_DIR.mkdir(exist_ok=True)
+        cache = {"timestamp": datetime.now(timezone.utc).isoformat(), "data": odds_data}
+        _ODDS_CACHE_FILE.write_text(json.dumps(cache, default=str))
+    except Exception as e:
+        logger.warning(f"Failed to save odds cache: {e}")
+
+
+def _load_odds_cache() -> dict:
+    try:
+        if _ODDS_CACHE_FILE.exists():
+            cache = json.loads(_ODDS_CACHE_FILE.read_text())
+            ts = datetime.fromisoformat(cache["timestamp"])
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            if age < _ODDS_CACHE_MAX_AGE:
+                logger.info(f"Loaded odds cache ({len(cache['data'])} events, {age/60:.0f}min old)")
+                return cache["data"]
+            else:
+                logger.info(f"Odds cache too old ({age/60:.0f}min), discarding")
+    except Exception as e:
+        logger.warning(f"Failed to load odds cache: {e}")
+    return {}
 
 
 def match_odds_to_game(game: dict, odds_data: dict) -> dict | None:
@@ -1810,8 +1851,7 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
             )
 
             claude_result = None
-            max_val_edge = max(value_home_edge, value_away_edge)
-            if use_claude and ANTHROPIC_API_KEY and claude_calls < 30 and max_val_edge > 0.01:
+            if use_claude and ANTHROPIC_API_KEY and claude_calls < 50:
                 claude_result = await claude_analyze_game(
                     session=session,
                     home_team=home,
@@ -1826,6 +1866,18 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
                     sport=odds_entry["sport"],
                 )
                 claude_calls += 1
+                await asyncio.sleep(1)
+
+            final_home = our_home
+            final_away = our_away
+            if claude_result and claude_result.get("pick"):
+                c_conf = claude_result.get("confidence", 0.5)
+                if claude_result["pick"] == "HOME":
+                    final_home = max(c_conf, our_home)
+                    final_away = 1.0 - final_home
+                else:
+                    final_away = max(c_conf, our_away)
+                    final_home = 1.0 - final_away
 
             signal = generate_signal(
                 home_team=home,
@@ -1834,13 +1886,13 @@ async def run_predictor(use_claude: bool = True, use_scrapers: bool = True) -> t
                 start_time=start_str,
                 book_home=best_home_imp,
                 book_away=best_away_imp,
-                our_home=our_home,
-                our_away=our_away,
+                our_home=final_home,
+                our_away=final_away,
                 n_bookmakers=odds_entry["n_bookmakers"],
                 has_sharp=odds_entry["has_sharp"],
                 home_form=None,
                 away_form=None,
-                adjustments={"value_edge": max_val_edge},
+                adjustments={"value_edge": max(value_home_edge, value_away_edge), "claude_boost": True},
                 claude_result=claude_result,
                 state=state,
             )
