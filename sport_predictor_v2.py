@@ -1528,8 +1528,9 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
         bar = _conf_bar(p.confidence)
         triple_mark = " \ud83d\udd25\ud83d\udd25\ud83d\udd25" if p.triple_confirmed else ""
 
+        pick_ru = "ДОМ" if p.pick == "HOME" else "ГОСТИ"
         header += (
-            f"<b>#{i} {icon} {_esc(p.pick)} {_esc(p.pick_team)}</b>{triple_mark}\n"
+            f"<b>#{i} {icon} {pick_ru} {_esc(p.pick_team)}</b>{triple_mark}\n"
             f"    {_esc(p.home_team)} vs {_esc(p.away_team)} \ud83d\udd52 {p.start_time}\n"
             f"    \ud83c\udfaf {bar} | \ud83d\udcc0 \u042d\u0434\u0436: {p.edge:.1%}\n"
             f"    \ud83d\udcb5 \u0421\u0442\u0430\u0432\u043a\u0430: <code>${p.bet_size:.2f}</code> | \ud83d\udfe2 \u0412\u044b\u0438\u0433\u0440\u044b\u0448: +${p.potential_win:.2f}\n"
@@ -1545,7 +1546,8 @@ async def send_telegram(predictions: list[GamePrediction], all_analyses: list[Ga
         if p.injury_impact_away > 0:
             extras.append(f"\ud83e\ude79\u0413:-{p.injury_impact_away:.0%}")
         if p.claude_pick:
-            extras.append(f"\ud83e\udd16 AI:{p.claude_pick}({p.claude_confidence:.0%})")
+            claude_pick_ru = "ДОМ" if p.claude_pick == "HOME" else "ГОСТИ"
+            extras.append(f"\ud83e\udd16 AI:{claude_pick_ru}({p.claude_confidence:.0%})")
         if p.contrarian_signal:
             extras.append(f"\ud83d\udd04 {_esc(p.contrarian_signal)}")
         if extras:
