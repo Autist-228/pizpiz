@@ -35,6 +35,7 @@ SCAN_INTERVAL = 10
 POLYMARKET_GAMMA = "https://gamma-api.polymarket.com"
 KRAKEN_API = "https://api.kraken.com/0/public"
 COINGECKO_API = "https://api.coingecko.com/api/v3"
+KRAKEN_FUTURES_API = "https://futures.kraken.com/derivatives/api/v3/tickers"
 
 CRYPTO_SLUGS = {
     "btc_2026": {
@@ -71,6 +72,14 @@ EXCHANGE_PAIRS = {
 
 HISTORICAL_VOL = {"BTC": 0.65, "ETH": 0.75, "SOL": 0.85, "ENA": 1.20}
 
+FUTURES_SYMBOLS = {
+    "BTC": "PF_XBTUSD",
+    "ETH": "PF_ETHUSD",
+    "SOL": "PF_SOLUSD",
+}
+
+LEVERAGE_TIERS = [1, 5, 10, 25, 50]
+
 
 @dataclass
 class ExchangePrice:
@@ -103,6 +112,17 @@ class PolyContract:
 
 
 @dataclass
+class FuturesData:
+    symbol: str
+    coin: str
+    perp_price: float
+    funding_rate: float
+    open_interest: float
+    basis_pct: float
+    ann_funding_pct: float
+
+
+@dataclass
 class Opportunity:
     contract: PolyContract
     exchange_price: float
@@ -115,6 +135,19 @@ class Opportunity:
     expected_profit_cents: float
     confidence: float
     speed_flag: bool = False
+
+
+@dataclass
+class HedgedPlay:
+    opp: Opportunity
+    leverage: int
+    hedge_direction: str
+    hedge_coin: str
+    dist_to_target_pct: float
+    funding_cost_daily: float
+    funding_cost_total: float
+    liq_distance_pct: float
+    side: str
 
 
 class Database:
@@ -309,6 +342,40 @@ def detect_coin(question: str, fallback: str = "") -> str:
     if "ethena" in q or " ena " in q:
         return "ENA"
     return fallback
+
+
+class FuturesFeed:
+    def __init__(self):
+        self.data: dict[str, FuturesData] = {}
+
+    def fetch(self, spots: dict[str, ExchangePrice]) -> dict[str, FuturesData]:
+        try:
+            resp = requests.get(KRAKEN_FUTURES_API, timeout=10)
+            if resp.status_code != 200:
+                return self.data
+            for t in resp.json().get("tickers", []):
+                sym = t.get("symbol", "")
+                for coin, fsym in FUTURES_SYMBOLS.items():
+                    if sym == fsym:
+                        perp = float(t.get("last", 0) or 0)
+                        fr = t.get("fundingRate", 0)
+                        if not isinstance(fr, (int, float)):
+                            fr = 0.0
+                        fr = float(fr)
+                        if abs(fr) > 0.01:
+                            fr = fr / 100.0
+                        oi = float(t.get("openInterest", 0) or 0)
+                        spot = spots[coin].price if coin in spots else 0
+                        basis = (perp - spot) / spot * 100 if spot > 0 and perp > 0 else 0
+                        ann = fr * 3 * 365 * 100
+                        self.data[coin] = FuturesData(
+                            symbol=fsym, coin=coin, perp_price=perp,
+                            funding_rate=fr, open_interest=oi,
+                            basis_pct=basis, ann_funding_pct=ann,
+                        )
+        except Exception as e:
+            log.warning(f"Futures feed error: {e}")
+        return self.data
 
 
 class ExchangeFeed:
@@ -526,6 +593,39 @@ class OpportunityRanker:
     def __init__(self, min_edge: float = 0.03):
         self.min_edge = min_edge
 
+    def build_hedged_plays(
+        self,
+        opportunities: list[Opportunity],
+        futures_data: dict[str, FuturesData],
+    ) -> list[HedgedPlay]:
+        plays = []
+        for opp in opportunities:
+            coin = opp.contract.coin
+            if coin not in futures_data:
+                continue
+            fd = futures_data[coin]
+            dist = abs(opp.contract.target_price - opp.exchange_price) / opp.exchange_price * 100 if opp.exchange_price > 0 else 0
+            is_yes = "YES" in opp.action
+            if is_yes:
+                hdir = "LONG" if opp.contract.direction == "reach" else "SHORT"
+            else:
+                hdir = "SHORT" if opp.contract.direction == "reach" else "LONG"
+
+            for lev in LEVERAGE_TIERS:
+                notional = 400 * lev
+                fund_daily = abs(fd.funding_rate) * 3 * notional
+                fund_total = fund_daily * opp.contract.days_left
+                liq_dist = 100.0 / lev if lev > 1 else 999.0
+                plays.append(HedgedPlay(
+                    opp=opp, leverage=lev, hedge_direction=hdir,
+                    hedge_coin=coin, dist_to_target_pct=dist,
+                    funding_cost_daily=fund_daily,
+                    funding_cost_total=fund_total,
+                    liq_distance_pct=liq_dist,
+                    side="YES" if is_yes else "NO",
+                ))
+        return plays
+
     def rank(
         self,
         contracts: list[PolyContract],
@@ -646,6 +746,8 @@ def format_dashboard(
     total_pnl: float,
     scan_num: int,
     elapsed: float,
+    futures_data: dict[str, FuturesData] | None = None,
+    hedged_plays: list[HedgedPlay] | None = None,
 ) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     w = 120
@@ -696,6 +798,78 @@ def format_dashboard(
                 f"{c.days_left:>4}d ${c.volume:>11,.0f}{spd}"
             )
 
+    if futures_data:
+        lines.append("")
+        lines.append("  FUTURES / BYBIT DATA:")
+        lines.append(
+            f"  {'Coin':<5} {'Perp':>12} {'Basis':>8} {'Fund/8h':>10} {'Ann%':>10} {'OI':>12}"
+        )
+        lines.append("  " + "-" * 65)
+        for coin in ["BTC", "ETH", "SOL"]:
+            if coin in futures_data:
+                fd = futures_data[coin]
+                lines.append(
+                    f"  {coin:<5} ${fd.perp_price:>10,.2f} {fd.basis_pct:>+7.3f}% "
+                    f"{fd.funding_rate*100:>8.4f}% {fd.ann_funding_pct:>9.1f}% "
+                    f"{fd.open_interest:>10,.1f}"
+                )
+        lines.append("  Bybit max leverage: BTC 100x | ETH 100x | SOL 50x")
+
+    if hedged_plays:
+        for lev in [10, 25]:
+            lev_plays = sorted(
+                [h for h in hedged_plays if h.leverage == lev],
+                key=lambda h: h.opp.edge, reverse=True,
+            )
+            if not lev_plays:
+                continue
+            lines.append("")
+            lines.append(
+                f"  LEVERAGE {lev}x PLAYS (Poly + Bybit {lev}x) | "
+                f"Liq at {100/lev:.0f}% move:"
+            )
+            lines.append(
+                f"  {'#':>3} {'Coin':<4} {'Action':<20} {'Target':>10} "
+                f"{'Dist':>6} {'Edge':>6} {'Hedge':<16}"
+            )
+            lines.append("  " + "-" * (w - 4))
+            seen = set()
+            rank = 0
+            for hp in lev_plays:
+                key = hp.opp.contract.question + hp.side
+                if key in seen:
+                    continue
+                seen.add(key)
+                rank += 1
+                if rank > 10:
+                    break
+                c = hp.opp.contract
+                tgt = f"${c.target_price:,.0f}" if c.target_price >= 1 else f"${c.target_price:.2f}"
+                act = f"BUY {hp.side} @{hp.opp.poly_price*100:.1f}c"
+                hdg = f"{hp.hedge_direction} {hp.hedge_coin} {lev}x"
+                lines.append(
+                    f"  {rank:>3} {c.coin:<4} {act:<20} {tgt:>10} "
+                    f"{hp.dist_to_target_pct:>5.1f}% {hp.opp.edge*100:>5.1f}c {hdg:<16}"
+                )
+
+    if futures_data:
+        fr_arbs = []
+        for coin in ["BTC", "ETH", "SOL"]:
+            if coin in futures_data:
+                fd = futures_data[coin]
+                if abs(fd.funding_rate) > 0.0001:
+                    sp = prices[coin].price if coin in prices else 0
+                    daily_pct = abs(fd.funding_rate) * 3 * 100
+                    direction = "SHORT perp + BUY spot" if fd.funding_rate > 0 else "LONG perp + SELL spot"
+                    fr_arbs.append(
+                        f"    {coin}: {direction} = {daily_pct:.3f}%/day "
+                        f"({fd.ann_funding_pct:.1f}%/yr)"
+                    )
+        if fr_arbs:
+            lines.append("")
+            lines.append("  FUNDING RATE ARBS (cash & carry):")
+            lines.extend(fr_arbs)
+
     if open_trades:
         lines.append("")
         lines.append(f"  PAPER PORTFOLIO ({len(open_trades)} open | closed PnL: {total_pnl*100:+.1f}c):")
@@ -721,6 +895,7 @@ def run_scanner():
     speed = SpeedDetector()
     ranker = OpportunityRanker(min_edge=0.03)
     trader = PaperTrader(db)
+    futures_feed = FuturesFeed()
 
     scan_num = 0
     poly_interval = 30
@@ -753,11 +928,14 @@ def run_scanner():
                 time.sleep(3)
                 continue
 
+            futures_data = futures_feed.fetch(prices)
+
             speed_alerts = speed.check(prices)
             for a in speed_alerts:
                 log.warning(f"SPEED: {a['msg']}")
 
             opportunities = ranker.rank(contracts, prices, speed_alerts)
+            hedged_plays = ranker.build_hedged_plays(opportunities, futures_data)
 
             for c in contracts:
                 if c.coin in prices and c.target_price > 0:
@@ -788,6 +966,8 @@ def run_scanner():
                 prices, contracts, opportunities, speed_alerts,
                 db.get_open_trades(), db.get_total_pnl(),
                 scan_num, elapsed,
+                futures_data=futures_data,
+                hedged_plays=hedged_plays,
             )
             print(dashboard, flush=True)
 
