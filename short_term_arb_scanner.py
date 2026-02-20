@@ -231,6 +231,12 @@ def analyze(all_markets, spot, now):
         y, n = m["yes"], m["no"]
         if y < 0.003 and n < 0.003:
             continue
+        if y >= 0.99 or n >= 0.99:
+            continue
+        if y <= 0.01 or n <= 0.01:
+            continue
+        if m["liq"] < 100:
+            continue
 
         v = VOL.get(coin, 0.75)
         if direction == "above":
